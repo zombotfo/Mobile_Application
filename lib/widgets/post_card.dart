@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/post_model.dart';
+import '../screens/chat_detail_screen.dart';
 import '../screens/edit_post_screen.dart';
+import '../services/chat_service.dart';
 import '../services/firestore_service.dart';
+import '../services/friend_service.dart';
 import '../utils/time_ago.dart';
 
 class PostCard extends StatefulWidget {
@@ -31,6 +35,8 @@ class PostCard extends StatefulWidget {
 
 class _PostCardState extends State<PostCard> {
   final _firestoreService = FirestoreService();
+  final _friendService = FriendService();
+  final _chatService = ChatService();
 
   // สร้าง stream เช็คสถานะโหวตแค่ครั้งเดียวตอนการ์ดถูกสร้าง (late final)
   // ไม่ใช่ทุกครั้งที่ build() — ถ้าสร้างใหม่ทุกครั้งที่ list rebuild (เช่น
@@ -39,8 +45,31 @@ class _PostCardState extends State<PostCard> {
   late final Stream<bool> _hasUpvotedStream =
       _firestoreService.hasUpvotedStream(widget.post.id);
 
+  // สถานะเพื่อน เก็บเป็น field ธรรมดา (ไม่ใช่ StreamBuilder) เพราะต้องใช้
+  // ตอนสร้างรายการเมนู "..." ซึ่งเป็นฟังก์ชัน sync ไม่สามารถ await ได้
+  bool _isFriend = false;
+  StreamSubscription<bool>? _friendSub;
+
   bool get _isOwner =>
       widget.post.authorId == FirebaseAuth.instance.currentUser?.uid;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!_isOwner) {
+      _friendSub = _friendService
+          .isFriendStream(widget.post.authorId)
+          .listen((value) {
+        if (mounted) setState(() => _isFriend = value);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _friendSub?.cancel();
+    super.dispose();
+  }
 
   Future<void> _handleUpvote() async {
     try {
@@ -89,6 +118,57 @@ class _PostCardState extends State<PostCard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ลบโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleFriend(bool isFriend) async {
+    try {
+      if (isFriend) {
+        await _friendService.removeFriend(widget.post.authorId);
+      } else {
+        await _friendService.addFriend(
+          friendUid: widget.post.authorId,
+          friendUsername: widget.post.authorUsername,
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isFriend ? 'ลบออกจากเพื่อนแล้ว' : 'เพิ่มเป็นเพื่อนแล้ว'),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openChatWithAuthor() async {
+    try {
+      final chatId = await _chatService.startChat(
+        otherUid: widget.post.authorId,
+        otherUsername: widget.post.authorUsername,
+      );
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatDetailScreen(
+              chatId: chatId,
+              otherUsername: widget.post.authorUsername,
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('เปิดแชทไม่สำเร็จ ลองใหม่อีกครั้ง')),
         );
       }
     }
@@ -216,6 +296,15 @@ class _PostCardState extends State<PostCard> {
                       case 'delete':
                         _confirmDelete();
                         break;
+                      case 'message':
+                        _openChatWithAuthor();
+                        break;
+                      case 'friend_add':
+                        _toggleFriend(false);
+                        break;
+                      case 'friend_remove':
+                        _toggleFriend(true);
+                        break;
                       case 'report':
                         _openReportDialog();
                         break;
@@ -235,8 +324,16 @@ class _PostCardState extends State<PostCard> {
                             ),
                           ),
                         ]
-                      : const [
+                      : [
+                          const PopupMenuItem(
+                            value: 'message',
+                            child: Text('ส่งข้อความ'),
+                          ),
                           PopupMenuItem(
+                            value: _isFriend ? 'friend_remove' : 'friend_add',
+                            child: Text(_isFriend ? 'ลบเพื่อน' : 'เพิ่มเพื่อน'),
+                          ),
+                          const PopupMenuItem(
                             value: 'report',
                             child: Text('รายงานโพสต์'),
                           ),

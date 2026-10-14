@@ -3,10 +3,11 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
-import 'chat_screen.dart';
+import 'chat_list_screen.dart';
 import 'create_post_screen.dart';
 import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
+import 'friends_list_screen.dart';
 
 /// โครงหลักของแอปหลังล็อกอิน: top bar (โปรไฟล์ / ค้นหา / เมนู)
 /// + bottom nav (หน้าหลัก / สร้างโพสต์ / แชท)
@@ -73,7 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _tabIndex == 0
                   ? FeedScreen(key: _feedKey, searchQuery: _searchQuery)
-                  : const ChatScreen(),
+                  : const ChatListScreen(),
             ),
           ],
         ),
@@ -167,6 +168,13 @@ class _TopBar extends StatelessWidget {
                     ),
                   );
                   break;
+                case 'friends':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const FriendsListScreen(),
+                    ),
+                  );
+                  break;
                 case 'logout':
                   AuthService().signOut();
                   break;
@@ -177,6 +185,7 @@ class _TopBar extends StatelessWidget {
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'edit', child: Text('แก้ไขโปรไฟล์')),
+              PopupMenuItem(value: 'friends', child: Text('เพื่อนของฉัน')),
               PopupMenuItem(value: 'logout', child: Text('ออกจากระบบ')),
               PopupMenuItem(
                 value: 'delete',
