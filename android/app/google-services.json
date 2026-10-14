@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "979018427401",
+    "project_id": "application-reddit-alike",
+    "storage_bucket": "application-reddit-alike.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:979018427401:android:02da8a5b134b8a3b545cd8",
+        "android_client_info": {
+          "package_name": "com.example.app_project"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHyTvFke0f5-b4rX3HfuzzEkoj2DH_SP8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
