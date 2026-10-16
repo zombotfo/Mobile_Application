@@ -45,6 +45,11 @@ class _PostCardState extends State<PostCard> {
   late final Stream<bool> _hasUpvotedStream =
       _firestoreService.hasUpvotedStream(widget.post.id);
 
+  // ดึงรูปโปรไฟล์ของเจ้าของโพสต์แค่ครั้งเดียว (late final) ไม่ fetch ซ้ำ
+  // ทุกครั้งที่การ์ด rebuild (เช่นตอนมีคนโหวต ทำให้ทั้ง list สร้างใหม่)
+  late final Future<String?> _authorPhotoFuture =
+      _firestoreService.fetchUserPhotoBase64(widget.post.authorId);
+
   // สถานะเพื่อน เก็บเป็น field ธรรมดา (ไม่ใช่ StreamBuilder) เพราะต้องใช้
   // ตอนสร้างรายการเมนู "..." ซึ่งเป็นฟังก์ชัน sync ไม่สามารถ await ได้
   bool _isFriend = false;
@@ -253,19 +258,29 @@ class _PostCardState extends State<PostCard> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 11,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  child: Text(
-                    post.authorUsername.isNotEmpty
-                        ? post.authorUsername[0].toUpperCase()
-                        : '?',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                FutureBuilder<String?>(
+                  future: _authorPhotoFuture,
+                  builder: (context, snapshot) {
+                    final photo = snapshot.data;
+                    return CircleAvatar(
+                      radius: 11,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      backgroundImage:
+                          photo != null ? MemoryImage(base64Decode(photo)) : null,
+                      child: photo == null
+                          ? Text(
+                              post.authorUsername.isNotEmpty
+                                  ? post.authorUsername[0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            )
+                          : null,
+                    );
+                  },
                 ),
                 const SizedBox(width: 8),
                 Expanded(

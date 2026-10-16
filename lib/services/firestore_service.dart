@@ -119,16 +119,49 @@ class FirestoreService {
         .map((doc) => doc.exists);
   }
 
-  /// UPDATE: แก้ไขชื่อผู้ใช้ ทั้งในเอกสารโปรไฟล์ Firestore, displayName ฝั่ง
-  /// Firebase Auth และ "โพสต์เก่าทั้งหมด" ของผู้ใช้คนนี้ให้ตรงกัน
-  /// (ตอนสร้างโพสต์เราคัดลอก username ฝังไว้ในแต่ละโพสต์เพื่อลดการอ่านซ้ำ
-  /// เปลี่ยนชื่อทีหลังจึงต้องไล่อัปเดตโพสต์เก่าตามไปด้วย ไม่งั้นจะค้างชื่อเดิม)
-  Future<void> updateUsername(String newUsername) async {
+  /// ดึงเอกสารโปรไฟล์ของผู้ใช้คนปัจจุบัน (ใช้เปิดหน้าแก้ไขโปรไฟล์)
+  Future<Map<String, dynamic>?> fetchOwnProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    final doc = await _users.doc(user.uid).get();
+    return doc.data();
+  }
+
+  /// ดึงแค่รูปโปรไฟล์ (Base64) ของผู้ใช้คนไหนก็ได้จาก uid — ใช้โชว์อวาตาร์
+  /// ในหน้าหลัก (ของตัวเอง) และในการ์ดโพสต์ (ของเจ้าของโพสต์)
+  Future<String?> fetchUserPhotoBase64(String uid) async {
+    final doc = await _users.doc(uid).get();
+    return doc.data()?['photoBase64'] as String?;
+  }
+
+  /// UPDATE: แก้ไขชื่อผู้ใช้และ/หรือรูปโปรไฟล์ ทั้งในเอกสารโปรไฟล์ Firestore,
+  /// displayName ฝั่ง Firebase Auth และ "โพสต์เก่าทั้งหมด" ของผู้ใช้คนนี้
+  /// ให้ชื่อตรงกัน (ตอนสร้างโพสต์เราคัดลอก username ฝังไว้ในแต่ละโพสต์เพื่อ
+  /// ลดการอ่านซ้ำ เปลี่ยนชื่อทีหลังจึงต้องไล่อัปเดตโพสต์เก่าตามไปด้วย)
+  /// [photoBytes] ไม่ใส่ = ไม่เปลี่ยนรูป, [removePhoto] = true = เอารูปเดิมออก
+  Future<void> updateUsername(
+    String newUsername, {
+    Uint8List? photoBytes,
+    bool removePhoto = false,
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
 
+    if (photoBytes != null && photoBytes.length > _maxImageBytes) {
+      throw Exception(
+        'รูปใหญ่เกินไป (จำกัดประมาณ 700KB) ลองเลือกรูปอื่นที่ไฟล์เล็กกว่านี้',
+      );
+    }
+
     final trimmed = newUsername.trim();
-    await _users.doc(user.uid).update({'username': trimmed});
+    final updates = <String, dynamic>{'username': trimmed};
+    if (photoBytes != null) {
+      updates['photoBase64'] = base64Encode(photoBytes);
+    } else if (removePhoto) {
+      updates['photoBase64'] = null;
+    }
+
+    await _users.doc(user.uid).update(updates);
     await user.updateDisplayName(trimmed);
 
     final ownPosts = await _posts.where('authorId', isEqualTo: user.uid).get();

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -30,10 +32,30 @@ class _HomeScreenState extends State<HomeScreen> {
   // รอบ poll อัตโนมัติทุก 1 นาทีของ FeedScreen
   final _feedKey = GlobalKey<FeedScreenState>();
 
+  String? _myPhotoBase64;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMyPhoto();
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadMyPhoto() async {
+    final photo = await FirestoreService().fetchUserPhotoBase64(widget.user.uid);
+    if (mounted) setState(() => _myPhotoBase64 = photo);
+  }
+
+  Future<void> _openEditProfile() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+    );
+    _loadMyPhoto(); // รูปโปรไฟล์อาจเปลี่ยนตอนแก้ไข
   }
 
   Future<void> _openCreatePost() async {
@@ -63,9 +85,10 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _TopBar(
               initial: initial,
-              username: user.displayName ?? '',
+              photoBase64: _myPhotoBase64,
               controller: _searchController,
               onChanged: (value) => setState(() => _searchQuery = value),
+              onEditProfile: _openEditProfile,
               onRefresh: _tabIndex == 0
                   ? () => _feedKey.currentState?.refreshNow()
                   : null,
@@ -92,16 +115,18 @@ class _HomeScreenState extends State<HomeScreen> {
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.initial,
-    required this.username,
+    required this.photoBase64,
     required this.controller,
     required this.onChanged,
+    required this.onEditProfile,
     this.onRefresh,
   });
 
   final String initial;
-  final String username;
+  final String? photoBase64;
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
+  final VoidCallback onEditProfile;
   // null เมื่ออยู่แท็บที่ไม่มีฟีดให้รีเฟรช (เช่นแท็บแชท)
   final VoidCallback? onRefresh;
 
@@ -161,12 +186,7 @@ class _TopBar extends StatelessWidget {
             onSelected: (value) {
               switch (value) {
                 case 'edit':
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          EditProfileScreen(currentUsername: username),
-                    ),
-                  );
+                  onEditProfile();
                   break;
                 case 'friends':
                   Navigator.of(context).push(
@@ -195,13 +215,18 @@ class _TopBar extends StatelessWidget {
             child: CircleAvatar(
               radius: 18,
               backgroundColor: colors.primary,
-              child: Text(
-                initial,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              backgroundImage: photoBase64 != null
+                  ? MemoryImage(base64Decode(photoBase64!))
+                  : null,
+              child: photoBase64 == null
+                  ? Text(
+                      initial,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    )
+                  : null,
             ),
           ),
           const SizedBox(width: 10),
