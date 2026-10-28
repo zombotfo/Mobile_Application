@@ -19,6 +19,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final _firestoreService = FirestoreService();
 
   Uint8List? _imageBytes;
+  Uint8List? _videoBytes;
+  String? _videoFileName;
   bool _submitting = false;
 
   @override
@@ -38,7 +40,31 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
-    if (mounted) setState(() => _imageBytes = bytes);
+    if (mounted) {
+      setState(() {
+        _imageBytes = bytes;
+        // มีได้แค่รูปหรือวิดีโออย่างใดอย่างหนึ่งต่อโพสต์
+        _videoBytes = null;
+        _videoFileName = null;
+      });
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    // จำกัดความยาวคลิปไว้ที่ 30 วินาที กันไฟล์ใหญ่/อัปโหลดนานเกินไป
+    final picked = await ImagePicker().pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 30),
+    );
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    if (mounted) {
+      setState(() {
+        _videoBytes = bytes;
+        _videoFileName = picked.name;
+        _imageBytes = null;
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -51,14 +77,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         title: _titleController.text,
         body: _bodyController.text,
         imageBytes: _imageBytes,
+        videoBytes: _videoBytes,
       );
       // ส่งค่า true กลับไปบอก HomeScreen ว่าสร้างโพสต์สำเร็จ
       // จะได้สั่งรีเฟรชฟีดให้เห็นผลทันที ไม่ต้องรอรอบ poll 1 นาที
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('โพสต์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง')),
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -124,10 +151,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            _ImagePickerArea(
+            _MediaPickerArea(
               imageBytes: _imageBytes,
-              onPick: _pickImage,
-              onRemove: () => setState(() => _imageBytes = null),
+              videoFileName: _videoFileName,
+              onPickImage: _pickImage,
+              onPickVideo: _pickVideo,
+              onRemove: () => setState(() {
+                _imageBytes = null;
+                _videoBytes = null;
+                _videoFileName = null;
+              }),
             ),
           ],
         ),
@@ -136,47 +169,70 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 }
 
-class _ImagePickerArea extends StatelessWidget {
-  const _ImagePickerArea({
+/// เลือกได้แค่รูปหรือวิดีโออย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่พร้อมกัน
+class _MediaPickerArea extends StatelessWidget {
+  const _MediaPickerArea({
     required this.imageBytes,
-    required this.onPick,
+    required this.videoFileName,
+    required this.onPickImage,
+    required this.onPickVideo,
     required this.onRemove,
   });
 
   final Uint8List? imageBytes;
-  final VoidCallback onPick;
+  final String? videoFileName;
+  final VoidCallback onPickImage;
+  final VoidCallback onPickVideo;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    if (imageBytes == null) {
-      return InkWell(
-        onTap: onPick,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          height: 160,
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F4F5),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE0E0E0)),
-          ),
-          child: const Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.add_photo_alternate_outlined,
-                  size: 32,
-                  color: Colors.black38,
-                ),
-                SizedBox(height: 6),
-                Text(
-                  'เพิ่มรูปภาพ (ไม่บังคับ)',
-                  style: TextStyle(color: Colors.black45, fontSize: 13),
-                ),
-              ],
+    if (imageBytes == null && videoFileName == null) {
+      return Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onPickImage,
+              icon: const Icon(Icons.image_outlined),
+              label: const Text('เพิ่มรูปภาพ'),
             ),
           ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onPickVideo,
+              icon: const Icon(Icons.videocam_outlined),
+              label: const Text('เพิ่มวิดีโอ'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (videoFileName != null) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF4F4F5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.videocam, color: Colors.black54),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                videoFileName!,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              onPressed: onRemove,
+            ),
+          ],
         ),
       );
     }

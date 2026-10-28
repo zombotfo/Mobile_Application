@@ -9,7 +9,9 @@ import 'chat_list_screen.dart';
 import 'create_post_screen.dart';
 import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
+import 'friend_requests_screen.dart';
 import 'friends_list_screen.dart';
+import 'profile_screen.dart';
 
 /// โครงหลักของแอปหลังล็อกอิน: top bar (โปรไฟล์ / ค้นหา / เมนู)
 /// + bottom nav (หน้าหลัก / สร้างโพสต์ / แชท)
@@ -261,14 +263,34 @@ class _TopBar extends StatelessWidget {
               icon: const Icon(Icons.refresh),
               onPressed: onRefresh,
             ),
-          IconButton(
+          PopupMenuButton<String>(
             tooltip: 'เมนู',
             icon: const Icon(Icons.menu),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('เมนูนี้จะเปิดใช้งานเร็วๆ นี้')),
-              );
+            onSelected: (value) {
+              final myUid = FirebaseAuth.instance.currentUser?.uid;
+              switch (value) {
+                case 'profile':
+                  if (myUid != null) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ProfileScreen(uid: myUid),
+                      ),
+                    );
+                  }
+                  break;
+                case 'requests':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const FriendRequestsScreen(),
+                    ),
+                  );
+                  break;
+              }
             },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'profile', child: Text('หน้าโปรไฟล์')),
+              PopupMenuItem(value: 'requests', child: Text('คำขอเป็นเพื่อน')),
+            ],
           ),
         ],
       ),

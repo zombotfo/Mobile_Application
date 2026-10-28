@@ -4,9 +4,10 @@ import '../models/app_user_model.dart';
 import '../services/chat_service.dart';
 import '../services/friend_service.dart';
 import 'chat_detail_screen.dart';
+import 'profile_screen.dart';
 
 /// ค้นหาผู้ใช้คนไหนก็ได้ในระบบ — เริ่มแชทได้ทันทีโดยไม่ต้องเป็นเพื่อนกันก่อน
-/// และเพิ่ม/ลบเพื่อนได้จากหน้านี้เลย
+/// แตะแถวเพื่อดูโปรไฟล์ (ส่งคำขอเป็นเพื่อน/ติดตามได้จากหน้านั้น)
 class UserSearchScreen extends StatefulWidget {
   const UserSearchScreen({super.key});
 
@@ -106,79 +107,19 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
                         ),
                       ),
                       title: Text('u/${u.username}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _FriendToggleButton(
-                            friendUid: u.uid,
-                            friendUsername: u.username,
-                          ),
-                          IconButton(
-                            tooltip: 'ส่งข้อความ',
-                            icon: const Icon(Icons.chat_bubble_outline),
-                            onPressed: () => _openChat(u),
-                          ),
-                        ],
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ProfileScreen(uid: u.uid),
+                        ),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'ส่งข้อความ',
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        onPressed: () => _openChat(u),
                       ),
                     );
                   },
                 ),
-    );
-  }
-}
-
-class _FriendToggleButton extends StatefulWidget {
-  const _FriendToggleButton({
-    required this.friendUid,
-    required this.friendUsername,
-  });
-
-  final String friendUid;
-  final String friendUsername;
-
-  @override
-  State<_FriendToggleButton> createState() => _FriendToggleButtonState();
-}
-
-class _FriendToggleButtonState extends State<_FriendToggleButton> {
-  final _friendService = FriendService();
-  late final Stream<bool> _isFriendStream =
-      _friendService.isFriendStream(widget.friendUid);
-  bool _working = false;
-
-  Future<void> _toggle(bool isFriend) async {
-    setState(() => _working = true);
-    try {
-      if (isFriend) {
-        await _friendService.removeFriend(widget.friendUid);
-      } else {
-        await _friendService.addFriend(
-          friendUid: widget.friendUid,
-          friendUsername: widget.friendUsername,
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _working = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<bool>(
-      stream: _isFriendStream,
-      builder: (context, snapshot) {
-        final isFriend = snapshot.data ?? false;
-        return TextButton(
-          onPressed: _working ? null : () => _toggle(isFriend),
-          child: Text(isFriend ? 'ลบเพื่อน' : 'เพิ่มเพื่อน'),
-        );
-      },
     );
   }
 }

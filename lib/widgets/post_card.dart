@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,10 +6,12 @@ import 'package:flutter/material.dart';
 import '../models/post_model.dart';
 import '../screens/chat_detail_screen.dart';
 import '../screens/edit_post_screen.dart';
+import '../screens/post_detail_screen.dart';
+import '../screens/profile_screen.dart';
 import '../services/chat_service.dart';
 import '../services/firestore_service.dart';
-import '../services/friend_service.dart';
 import '../utils/time_ago.dart';
+import 'post_video_player.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({
@@ -18,6 +19,7 @@ class PostCard extends StatefulWidget {
     required this.post,
     this.onUpdated,
     this.onDeleted,
+    this.inDetailView = false,
   });
 
   final Post post;
@@ -29,56 +31,46 @@ class PostCard extends StatefulWidget {
   /// เรียกตอนลบโพสต์สำเร็จ ให้ฟีดเอาการ์ดนี้ออกจากจอทันที
   final VoidCallback? onDeleted;
 
+  /// true เมื่อการ์ดนี้แสดงอยู่ใน PostDetailScreen อยู่แล้ว — ปิดการแตะแถว
+  /// คอมเมนต์เพื่อเปิดหน้ารายละเอียดซ้ำซ้อน (เปิดหน้าตัวเองซ้อนตัวเอง)
+  final bool inDetailView;
+
   @override
   State<PostCard> createState() => _PostCardState();
 }
 
 class _PostCardState extends State<PostCard> {
   final _firestoreService = FirestoreService();
-  final _friendService = FriendService();
   final _chatService = ChatService();
 
-  // สร้าง stream เช็คสถานะโหวตแค่ครั้งเดียวตอนการ์ดถูกสร้าง (late final)
-  // ไม่ใช่ทุกครั้งที่ build() — ถ้าสร้างใหม่ทุกครั้งที่ list rebuild (เช่น
-  // ตอนโพสต์อื่นถูกโหวต ทำให้ทั้ง list สร้างใหม่) ไอคอนโหวตของทุกการ์ดจะ
-  // กระพริบ reset ไปพร้อมกันหมด แม้จะไม่ได้โหวตโพสต์นั้นก็ตาม
-  late final Stream<bool> _hasUpvotedStream =
-      _firestoreService.hasUpvotedStream(widget.post.id);
+  // สร้าง stream เช็คสถานะโหวต/reaction แค่ครั้งเดียวตอนการ์ดถูกสร้าง
+  // (late final) ไม่ใช่ทุกครั้งที่ build() — ถ้าสร้างใหม่ทุกครั้งที่ list
+  // rebuild (เช่นตอนโพสต์อื่นถูกโหวต ทำให้ทั้ง list สร้างใหม่) ไอคอนของ
+  // ทุกการ์ดจะกระพริบ reset ไปพร้อมกันหมด แม้จะไม่ได้โหวต/react โพสต์นั้น
+  late final Stream<int?> _voteValueStream =
+      _firestoreService.voteValueStream(widget.post.id);
+  late final Stream<String?> _myReactionStream =
+      _firestoreService.myReactionStream(widget.post.id);
 
   // ดึงรูปโปรไฟล์ของเจ้าของโพสต์แค่ครั้งเดียว (late final) ไม่ fetch ซ้ำ
   // ทุกครั้งที่การ์ด rebuild (เช่นตอนมีคนโหวต ทำให้ทั้ง list สร้างใหม่)
   late final Future<String?> _authorPhotoFuture =
       _firestoreService.fetchUserPhotoBase64(widget.post.authorId);
 
-  // สถานะเพื่อน เก็บเป็น field ธรรมดา (ไม่ใช่ StreamBuilder) เพราะต้องใช้
-  // ตอนสร้างรายการเมนู "..." ซึ่งเป็นฟังก์ชัน sync ไม่สามารถ await ได้
-  bool _isFriend = false;
-  StreamSubscription<bool>? _friendSub;
-
   bool get _isOwner =>
       widget.post.authorId == FirebaseAuth.instance.currentUser?.uid;
 
-  @override
-  void initState() {
-    super.initState();
-    if (!_isOwner) {
-      _friendSub = _friendService
-          .isFriendStream(widget.post.authorId)
-          .listen((value) {
-        if (mounted) setState(() => _isFriend = value);
-      });
-    }
+  void _openAuthorProfile() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(uid: widget.post.authorId),
+      ),
+    );
   }
 
-  @override
-  void dispose() {
-    _friendSub?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _handleUpvote() async {
+  Future<void> _handleVote(int value) async {
     try {
-      await _firestoreService.toggleUpvote(widget.post.id);
+      await _firestoreService.setVote(widget.post.id, value);
     } catch (_) {
       // เช่น rules ปฏิเสธ หรือเน็ตหลุด กันไม่ให้ error เงียบๆ
       if (mounted) {
@@ -89,11 +81,29 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  Future<void> _handleReaction(String emoji) async {
+    try {
+      await _firestoreService.setReaction(widget.post.id, emoji);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง')),
+        );
+      }
+    }
+  }
+
   Future<void> _openEdit() async {
     final updated = await Navigator.of(context).push<Post>(
       MaterialPageRoute(builder: (_) => EditPostScreen(post: widget.post)),
     );
     if (updated != null) widget.onUpdated?.call(updated);
+  }
+
+  void _openDetail() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PostDetailScreen(post: widget.post)),
+    );
   }
 
   Future<void> _confirmDelete() async {
@@ -123,32 +133,6 @@ class _PostCardState extends State<PostCard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ลบโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง')),
-        );
-      }
-    }
-  }
-
-  Future<void> _toggleFriend(bool isFriend) async {
-    try {
-      if (isFriend) {
-        await _friendService.removeFriend(widget.post.authorId);
-      } else {
-        await _friendService.addFriend(
-          friendUid: widget.post.authorId,
-          friendUsername: widget.post.authorUsername,
-        );
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isFriend ? 'ลบออกจากเพื่อนแล้ว' : 'เพิ่มเป็นเพื่อนแล้ว'),
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง')),
         );
       }
     }
@@ -258,34 +242,53 @@ class _PostCardState extends State<PostCard> {
           children: [
             Row(
               children: [
-                FutureBuilder<String?>(
-                  future: _authorPhotoFuture,
-                  builder: (context, snapshot) {
-                    final photo = snapshot.data;
-                    return CircleAvatar(
-                      radius: 11,
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      backgroundImage:
-                          photo != null ? MemoryImage(base64Decode(photo)) : null,
-                      child: photo == null
-                          ? Text(
-                              post.authorUsername.isNotEmpty
-                                  ? post.authorUsername[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            )
-                          : null,
-                    );
-                  },
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: _openAuthorProfile,
+                  child: Row(
+                    children: [
+                      FutureBuilder<String?>(
+                        future: _authorPhotoFuture,
+                        builder: (context, snapshot) {
+                          final photo = snapshot.data;
+                          return CircleAvatar(
+                            radius: 11,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primary,
+                            backgroundImage: photo != null
+                                ? MemoryImage(base64Decode(photo))
+                                : null,
+                            child: photo == null
+                                ? Text(
+                                    post.authorUsername.isNotEmpty
+                                        ? post.authorUsername[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  )
+                                : null,
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'u/${post.authorUsername}',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'u/${post.authorUsername} · ${timeAgo(post.createdAt)}',
+                    '· ${timeAgo(post.createdAt)}',
                     style: const TextStyle(
                       fontSize: 12.5,
                       color: Colors.black54,
@@ -314,11 +317,8 @@ class _PostCardState extends State<PostCard> {
                       case 'message':
                         _openChatWithAuthor();
                         break;
-                      case 'friend_add':
-                        _toggleFriend(false);
-                        break;
-                      case 'friend_remove':
-                        _toggleFriend(true);
+                      case 'profile':
+                        _openAuthorProfile();
                         break;
                       case 'report':
                         _openReportDialog();
@@ -341,12 +341,12 @@ class _PostCardState extends State<PostCard> {
                         ]
                       : [
                           const PopupMenuItem(
+                            value: 'profile',
+                            child: Text('ดูโปรไฟล์'),
+                          ),
+                          const PopupMenuItem(
                             value: 'message',
                             child: Text('ส่งข้อความ'),
-                          ),
-                          PopupMenuItem(
-                            value: _isFriend ? 'friend_remove' : 'friend_add',
-                            child: Text(_isFriend ? 'ลบเพื่อน' : 'เพิ่มเพื่อน'),
                           ),
                           const PopupMenuItem(
                             value: 'report',
@@ -378,7 +378,13 @@ class _PostCardState extends State<PostCard> {
                 ),
               ),
             ],
-            if (post.imageBase64 != null) ...[
+            if (post.videoUrl != null) ...[
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: PostVideoPlayer(videoUrl: post.videoUrl!),
+              ),
+            ] else if (post.imageBase64 != null) ...[
               const SizedBox(height: 10),
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
@@ -410,67 +416,169 @@ class _PostCardState extends State<PostCard> {
               ),
             ],
             const SizedBox(height: 8),
-            Row(
-              children: [
-                StreamBuilder<bool>(
-                  stream: _hasUpvotedStream,
-                  builder: (context, snapshot) {
-                    final hasUpvoted = snapshot.data ?? false;
-                    final color = hasUpvoted
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.black54;
+            // แถวอิโมจิ react (เลือกได้ 1 อิโมจิต่อคนต่อโพสต์ แยกจากปุ่ม
+            // ถูกใจ/ไม่ถูกใจด้านล่าง)
+            StreamBuilder<String?>(
+              stream: _myReactionStream,
+              builder: (context, snapshot) {
+                final myReaction = snapshot.data;
+                return Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: FirestoreService.reactionEmojis.map((emoji) {
+                    final count = post.reactionCounts[emoji] ?? 0;
+                    final selected = myReaction == emoji;
                     return InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: _handleUpvote,
-                      child: Padding(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => _handleReaction(emoji),
+                      child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
-                          vertical: 6,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.12)
+                              : const Color(0xFFF4F4F5),
+                          borderRadius: BorderRadius.circular(16),
+                          border: selected
+                              ? Border.all(
+                                  color: Theme.of(context).colorScheme.primary,
+                                )
+                              : null,
                         ),
                         child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              hasUpvoted
-                                  ? Icons.arrow_circle_up
-                                  : Icons.arrow_circle_up_outlined,
-                              size: 20,
-                              color: color,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${post.upvoteCount}',
-                              style: TextStyle(
-                                color: color,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13,
+                            Text(emoji, style: const TextStyle(fontSize: 14)),
+                            if (count > 0) ...[
+                              const SizedBox(width: 3),
+                              Text(
+                                '$count',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.black54,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
                     );
+                  }).toList(),
+                );
+              },
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                StreamBuilder<int?>(
+                  stream: _voteValueStream,
+                  builder: (context, snapshot) {
+                    final myVote = snapshot.data;
+                    final upColor = myVote == 1
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.black54;
+                    final downColor = myVote == -1
+                        ? Colors.red
+                        : Colors.black54;
+                    return Row(
+                      children: [
+                        InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => _handleVote(1),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  myVote == 1
+                                      ? Icons.arrow_circle_up
+                                      : Icons.arrow_circle_up_outlined,
+                                  size: 20,
+                                  color: upColor,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${post.upvoteCount}',
+                                  style: TextStyle(
+                                    color: upColor,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => _handleVote(-1),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  myVote == -1
+                                      ? Icons.arrow_circle_down
+                                      : Icons.arrow_circle_down_outlined,
+                                  size: 20,
+                                  color: downColor,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${post.downvoteCount}',
+                                  style: TextStyle(
+                                    color: downColor,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
                   },
                 ),
                 const SizedBox(width: 4),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.mode_comment_outlined,
-                        size: 18,
-                        color: Colors.black54,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${post.commentCount} ความคิดเห็น',
-                        style: const TextStyle(
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: widget.inDetailView ? null : _openDetail,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.mode_comment_outlined,
+                          size: 18,
                           color: Colors.black54,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          '${post.commentCount} ความคิดเห็น',
+                          style: const TextStyle(
+                            color: Colors.black54,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

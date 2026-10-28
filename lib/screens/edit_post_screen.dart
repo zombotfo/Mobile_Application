@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/post_model.dart';
 import '../services/firestore_service.dart';
+import '../widgets/post_video_player.dart';
 
 class EditPostScreen extends StatefulWidget {
   const EditPostScreen({super.key, required this.post});
@@ -24,10 +25,18 @@ class _EditPostScreenState extends State<EditPostScreen> {
 
   Uint8List? _newImageBytes; // ผู้ใช้เลือกรูปใหม่มาแทนของเดิม
   bool _removeImage = false; // ผู้ใช้กดเอารูปเดิมออกโดยไม่เลือกรูปใหม่
+
+  Uint8List? _newVideoBytes;
+  String? _newVideoFileName;
+  bool _removeVideo = false;
+
   bool _saving = false;
 
   bool get _hasImage =>
       !_removeImage && (_newImageBytes != null || widget.post.imageBase64 != null);
+  bool get _hasExistingVideo => !_removeVideo && widget.post.videoUrl != null;
+  bool get _hasNewVideo => _newVideoBytes != null;
+  bool get _hasAnyMedia => _hasImage || _hasExistingVideo || _hasNewVideo;
 
   @override
   void dispose() {
@@ -48,8 +57,41 @@ class _EditPostScreenState extends State<EditPostScreen> {
       setState(() {
         _newImageBytes = bytes;
         _removeImage = false;
+        // สลับมาเป็นรูป เลยเอาวิดีโอ (เดิมหรือใหม่) ออก
+        _newVideoBytes = null;
+        _newVideoFileName = null;
+        _removeVideo = true;
       });
     }
+  }
+
+  Future<void> _pickVideo() async {
+    final picked = await ImagePicker().pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 30),
+    );
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    if (mounted) {
+      setState(() {
+        _newVideoBytes = bytes;
+        _newVideoFileName = picked.name;
+        _removeVideo = false;
+        // สลับมาเป็นวิดีโอ เลยเอารูป (เดิมหรือใหม่) ออก
+        _newImageBytes = null;
+        _removeImage = true;
+      });
+    }
+  }
+
+  void _removeMedia() {
+    setState(() {
+      _newImageBytes = null;
+      _removeImage = true;
+      _newVideoBytes = null;
+      _newVideoFileName = null;
+      _removeVideo = true;
+    });
   }
 
   Future<void> _save() async {
@@ -64,9 +106,13 @@ class _EditPostScreenState extends State<EditPostScreen> {
         body: _bodyController.text,
         imageBytes: _newImageBytes,
         removeImage: _removeImage,
+        videoBytes: _newVideoBytes,
+        removeVideo: _removeVideo,
       );
 
       // ส่งโพสต์เวอร์ชันใหม่กลับไปให้การ์ดอัปเดตทันที ไม่ต้องรอรอบ poll
+      // (videoUrl ใหม่จริงจาก Cloudinary ยังไม่รู้ค่าตรงนี้ ถ้าเพิ่งอัปโหลด
+      // วิดีโอใหม่ การ์ดจะเห็นลิงก์จริงหลังรอบ poll ถัดไปแทน)
       final updated = Post(
         id: widget.post.id,
         authorId: widget.post.authorId,
@@ -81,13 +127,16 @@ class _EditPostScreenState extends State<EditPostScreen> {
             : (_newImageBytes != null
                 ? base64Encode(_newImageBytes!)
                 : widget.post.imageBase64),
+        videoUrl: _removeVideo
+            ? null
+            : (_newVideoBytes == null ? widget.post.videoUrl : null),
       );
 
       if (mounted) Navigator.of(context).pop(updated);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง')),
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -150,45 +199,70 @@ class _EditPostScreenState extends State<EditPostScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            _buildImageArea(),
+            _buildMediaArea(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildImageArea() {
-    if (!_hasImage) {
-      return InkWell(
-        onTap: _pickImage,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          height: 160,
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F4F5),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE0E0E0)),
-          ),
-          child: const Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.add_photo_alternate_outlined,
-                    size: 32, color: Colors.black38),
-                SizedBox(height: 6),
-                Text(
-                  'เพิ่มรูปภาพ (ไม่บังคับ)',
-                  style: TextStyle(color: Colors.black45, fontSize: 13),
-                ),
-              ],
+  Widget _buildMediaArea() {
+    if (!_hasAnyMedia) {
+      return Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _pickImage,
+              icon: const Icon(Icons.image_outlined),
+              label: const Text('เพิ่มรูปภาพ'),
             ),
           ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _pickVideo,
+              icon: const Icon(Icons.videocam_outlined),
+              label: const Text('เพิ่มวิดีโอ'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // มีวิดีโอใหม่ที่เพิ่งเลือก (ยังไม่ได้อัปโหลด) — โชว์แค่ชื่อไฟล์
+    if (_hasNewVideo) {
+      return _mediaContainer(
+        child: Row(
+          children: [
+            const Icon(Icons.videocam, color: Colors.black54),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _newVideoFileName ?? 'วิดีโอใหม่',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
       );
     }
 
-    final bytes = _newImageBytes ?? base64Decode(widget.post.imageBase64!);
+    // มีวิดีโอเดิมอยู่แล้ว (ยังไม่ได้แก้) — เล่นดูได้เลยจากลิงก์เดิม
+    if (_hasExistingVideo) {
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: PostVideoPlayer(videoUrl: widget.post.videoUrl!),
+          ),
+          _removeButton(),
+        ],
+      );
+    }
 
+    // เหลือกรณีมีรูปภาพ (เดิมหรือใหม่)
+    final bytes = _newImageBytes ?? base64Decode(widget.post.imageBase64!);
     return Stack(
       children: [
         ClipRRect(
@@ -200,26 +274,47 @@ class _EditPostScreenState extends State<EditPostScreen> {
             fit: BoxFit.cover,
           ),
         ),
-        Positioned(
-          top: 8,
-          right: 8,
-          child: InkWell(
-            onTap: () => setState(() {
-              _newImageBytes = null;
-              _removeImage = true;
-            }),
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: const BoxDecoration(
-                color: Colors.black54,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.close, color: Colors.white, size: 18),
-            ),
-          ),
-        ),
+        _removeButton(),
       ],
+    );
+  }
+
+  Widget _mediaContainer({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F4F5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: child),
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: _removeMedia,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _removeButton() {
+    return Positioned(
+      top: 8,
+      right: 8,
+      child: InkWell(
+        onTap: _removeMedia,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(
+            color: Colors.black54,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.close, color: Colors.white, size: 18),
+        ),
+      ),
     );
   }
 }
