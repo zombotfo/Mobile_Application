@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import 'account_settings_screen.dart';
 import 'chat_list_screen.dart';
+import 'communities_screen.dart';
 import 'create_post_screen.dart';
 import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
@@ -25,7 +27,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _tabIndex = 0; // 0 = หน้าหลัก, 1 = แชท ("สร้างโพสต์" ไม่ใช่แท็บ แต่ push หน้าใหม่)
+  // 0 = หน้าหลัก, 1 = ชุมชน, 2 = แชท ("สร้างโพสต์" ไม่ใช่แท็บ แต่ push หน้าใหม่)
+  int _tabIndex = 0;
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
@@ -97,9 +100,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const Divider(height: 1),
             Expanded(
-              child: _tabIndex == 0
-                  ? FeedScreen(key: _feedKey, searchQuery: _searchQuery)
-                  : const ChatListScreen(),
+              child: switch (_tabIndex) {
+                0 => FeedScreen(key: _feedKey, searchQuery: _searchQuery),
+                1 => const CommunitiesScreen(),
+                _ => const ChatListScreen(),
+              },
             ),
           ],
         ),
@@ -107,7 +112,8 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: _BottomNavBar(
         currentIndex: _tabIndex,
         onHome: () => setState(() => _tabIndex = 0),
-        onChat: () => setState(() => _tabIndex = 1),
+        onCommunities: () => setState(() => _tabIndex = 1),
+        onChat: () => setState(() => _tabIndex = 2),
         onCreate: _openCreatePost,
       ),
     );
@@ -285,11 +291,19 @@ class _TopBar extends StatelessWidget {
                     ),
                   );
                   break;
+                case 'settings':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AccountSettingsScreen(),
+                    ),
+                  );
+                  break;
               }
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'profile', child: Text('หน้าโปรไฟล์')),
               PopupMenuItem(value: 'requests', child: Text('คำขอเป็นเพื่อน')),
+              PopupMenuItem(value: 'settings', child: Text('การตั้งค่าบัญชี')),
             ],
           ),
         ],
@@ -302,12 +316,14 @@ class _BottomNavBar extends StatelessWidget {
   const _BottomNavBar({
     required this.currentIndex,
     required this.onHome,
+    required this.onCommunities,
     required this.onChat,
     required this.onCreate,
   });
 
   final int currentIndex;
   final VoidCallback onHome;
+  final VoidCallback onCommunities;
   final VoidCallback onChat;
   final VoidCallback onCreate;
 
@@ -330,11 +346,18 @@ class _BottomNavBar extends StatelessWidget {
               selected: currentIndex == 0,
               onTap: onHome,
             ),
+            // ลำดับแบบ Reddit: หน้าหลัก → ชุมชน → สร้างโพสต์ → แชท
+            _NavItem(
+              icon: Icons.groups_rounded,
+              label: 'ชุมชน',
+              selected: currentIndex == 1,
+              onTap: onCommunities,
+            ),
             _CreateButton(onTap: onCreate),
             _NavItem(
               icon: Icons.chat_bubble_rounded,
               label: 'แชท',
-              selected: currentIndex == 1,
+              selected: currentIndex == 2,
               onTap: onChat,
             ),
           ],

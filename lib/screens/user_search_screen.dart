@@ -58,10 +58,10 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เปิดแชทไม่สำเร็จ ลองใหม่อีกครั้ง')),
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
     }

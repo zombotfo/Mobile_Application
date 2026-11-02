@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/post_model.dart';
+import '../services/community_service.dart';
 import '../services/firestore_service.dart';
 import '../widgets/post_card.dart';
 
@@ -24,6 +25,7 @@ class FeedScreen extends StatefulWidget {
 
 class FeedScreenState extends State<FeedScreen> {
   final _firestoreService = FirestoreService();
+  final _communityService = CommunityService();
   Timer? _pollTimer;
 
   List<Post>? _posts;
@@ -45,7 +47,20 @@ class FeedScreenState extends State<FeedScreen> {
 
   Future<void> _refresh() async {
     try {
-      final posts = await _firestoreService.fetchPosts();
+      final allPosts = await _firestoreService.fetchPosts();
+
+      // หน้า home โชว์เฉพาะโพสต์ทั่วไป + โพสต์ในชุมชนที่เราเป็นสมาชิก
+      // ถ้าโหลดรายการชุมชนของเราไม่ได้ ให้ซ่อนโพสต์ชุมชนทั้งหมดไว้ก่อน
+      // (ปลอดภัยไว้ก่อน ดีกว่าโชว์โพสต์ของชุมชนที่เราไม่ได้อยู่)
+      Set<String> myCommunityIds;
+      try {
+        myCommunityIds = await _communityService.fetchMyActiveCommunityIds();
+      } catch (e) {
+        debugPrint('FeedScreen: โหลดชุมชนของฉันไม่ได้ $e');
+        myCommunityIds = <String>{};
+      }
+      final posts = CommunityService.filterVisible(allPosts, myCommunityIds);
+
       if (!mounted) return;
       setState(() {
         _posts = posts;

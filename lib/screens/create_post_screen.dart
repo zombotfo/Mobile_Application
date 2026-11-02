@@ -3,10 +3,15 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/community_model.dart';
+import '../services/community_service.dart';
 import '../services/firestore_service.dart';
 
 class CreatePostScreen extends StatefulWidget {
-  const CreatePostScreen({super.key});
+  const CreatePostScreen({super.key, this.initialCommunity});
+
+  /// ชุมชนที่เลือกไว้ล่วงหน้า (เมื่อเปิดจากปุ่ม "โพสต์ในชุมชนนี้")
+  final Community? initialCommunity;
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -17,11 +22,43 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final _titleController = TextEditingController();
   final _bodyController = TextEditingController();
   final _firestoreService = FirestoreService();
+  final _communityService = CommunityService();
+
+  // ชุมชนที่โพสต์ลงได้ (เฉพาะที่เราเป็นสมาชิก) '' = โพสต์ทั่วไป ไม่ระบุชุมชน
+  List<Community> _myCommunities = [];
+  String _selectedCommunityId = '';
 
   Uint8List? _imageBytes;
   Uint8List? _videoBytes;
   String? _videoFileName;
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialCommunity;
+    if (initial != null) {
+      _myCommunities = [initial];
+      _selectedCommunityId = initial.id;
+    }
+    _loadMyCommunities();
+  }
+
+  Future<void> _loadMyCommunities() async {
+    try {
+      final list = await _communityService.fetchMyCommunities();
+      if (!mounted) return;
+      setState(() {
+        _myCommunities = list;
+        final initial = widget.initialCommunity;
+        if (initial != null && !list.any((c) => c.id == initial.id)) {
+          _myCommunities = [initial, ...list];
+        }
+      });
+    } catch (_) {
+      // โหลดรายการชุมชนไม่ได้ก็ยังโพสต์ทั่วไปได้ตามปกติ
+    }
+  }
 
   @override
   void dispose() {
@@ -78,6 +115,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         body: _bodyController.text,
         imageBytes: _imageBytes,
         videoBytes: _videoBytes,
+        communityId: _selectedCommunityId.isEmpty ? null : _selectedCommunityId,
+        communityName: _selectedCommunityId.isEmpty
+            ? null
+            : _myCommunities.firstWhere((c) => c.id == _selectedCommunityId).name,
       );
       // ส่งค่า true กลับไปบอก HomeScreen ว่าสร้างโพสต์สำเร็จ
       // จะได้สั่งรีเฟรชฟีดให้เห็นผลทันที ไม่ต้องรอรอบ poll 1 นาที
@@ -121,6 +162,31 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // เลือกชุมชนที่จะโพสต์ลง (โชว์เฉพาะเมื่อเราเข้าร่วมชุมชนอย่างน้อย 1 แห่ง)
+            if (_myCommunities.isNotEmpty) ...[
+              DropdownButtonFormField<String>(
+                value: _selectedCommunityId,
+                decoration: const InputDecoration(
+                  labelText: 'โพสต์ไปที่',
+                  isDense: true,
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: '',
+                    child: Text('ทั่วไป (ไม่ระบุชุมชน)'),
+                  ),
+                  ..._myCommunities.map(
+                    (c) => DropdownMenuItem(
+                      value: c.id,
+                      child: Text('r/${c.name}'),
+                    ),
+                  ),
+                ],
+                onChanged: (value) =>
+                    setState(() => _selectedCommunityId = value ?? ''),
+              ),
+              const SizedBox(height: 8),
+            ],
             TextFormField(
               controller: _titleController,
               maxLength: 300,

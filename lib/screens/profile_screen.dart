@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../models/friendship_model.dart';
 import '../models/post_model.dart';
 import '../services/chat_service.dart';
+import '../services/community_service.dart';
 import '../services/firestore_service.dart';
 import '../services/follow_service.dart';
+import '../services/friend_service.dart';
 import '../widgets/follow_action_button.dart';
 import '../widgets/friend_action_button.dart';
 import '../widgets/post_card.dart';
@@ -25,13 +28,21 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final _firestoreService = FirestoreService();
   final _followService = FollowService();
+  final _friendService = FriendService();
   final _chatService = ChatService();
 
   bool get _isMe => widget.uid == FirebaseAuth.instance.currentUser?.uid;
 
+  // เห็นเนื้อหา (โพสต์/สถิติ) ได้เมื่อ: เป็นโปรไฟล์ตัวเอง, หรือบัญชีนั้น
+  // ไม่ได้ตั้งเป็นส่วนตัว, หรือเราเป็นเพื่อนกับเจ้าของบัญชีแล้ว
+  bool get _canViewContent => _isMe || !_isPrivate || _isFriend;
+
   bool _loading = true;
+  bool _hasError = false;
   String _username = '';
   String? _photoBase64;
+  bool _isPrivate = false;
+  bool _isFriend = false;
   List<Post> _posts = [];
   int _totalUpvotes = 0;
   int _totalDownvotes = 0;
@@ -44,47 +55,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
-  bool _hasError = false;
-
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _hasError = false;
     });
 
-    final List<dynamic> results;
     try {
-      results = await Future.wait([
+      final profileResults = await Future.wait([
         _firestoreService.fetchUserProfile(widget.uid),
-        _firestoreService.fetchPostsByAuthor(widget.uid),
         _followService.fetchFollowerCount(widget.uid),
+        _isMe
+            ? Future.value(FriendshipStatus.none)
+            : _friendService.friendshipStatusStream(widget.uid).first,
       ]);
+
+      final profile = profileResults[0] as Map<String, dynamic>?;
+      final followerCount = profileResults[1] as int;
+      final friendshipStatus = profileResults[2] as FriendshipStatus;
+
+      final isPrivate = profile?['isPrivate'] as bool? ?? false;
+      final isFriend = friendshipStatus == FriendshipStatus.friends;
+      final canView = _isMe || !isPrivate || isFriend;
+
+      // ไม่ดึงโพสต์เลยถ้าดูเนื้อหาไม่ได้ (บัญชี private ที่ไม่ใช่เพื่อน)
+      // ลดการอ่านข้อมูลที่ใช้งานไม่ได้อยู่ดี
+      var posts =
+          canView ? await _firestoreService.fetchPostsByAuthor(widget.uid) : <Post>[];
+
+      // โพสต์ในชุมชนที่เราไม่ได้เป็นสมาชิก ไม่โชว์ในโปรไฟล์คนอื่นด้วย
+      // (โปรไฟล์ตัวเองเห็นครบ เพราะ filterVisible ยกเว้นโพสต์ของตัวเองให้)
+      if (canView && !_isMe && posts.any((p) => p.communityId != null)) {
+        Set<String> myCommunityIds;
+        try {
+          myCommunityIds = await CommunityService().fetchMyActiveCommunityIds();
+        } catch (_) {
+          myCommunityIds = <String>{};
+        }
+        posts = CommunityService.filterVisible(posts, myCommunityIds);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _username = profile?['username'] as String? ?? 'unknown';
+        _photoBase64 = profile?['photoBase64'] as String?;
+        _isPrivate = isPrivate;
+        _isFriend = isFriend;
+        _posts = posts;
+        _totalUpvotes = posts.fold<int>(0, (sum, p) => sum + p.upvoteCount);
+        _totalDownvotes = posts.fold<int>(0, (sum, p) => sum + p.downvoteCount);
+        _followerCount = followerCount;
+        // friendCount เก็บเป็นตัวเลขสะสมในโปรไฟล์โดยตรง (ไม่ query friendships
+        // สดแบบ follower เพราะอ่านเอกสารมิตรภาพของคนอื่นที่เราไม่ใช่คู่สัญญา
+        // ไม่ได้ตาม rules — อัปเดตค่านี้ตอนยอมรับ/เลิกเป็นเพื่อนใน friend_service.dart)
+        _friendCount = profile?['friendCount'] as int? ?? 0;
+        _loading = false;
+      });
     } catch (e) {
       // ชั่วคราว: พิมพ์ error จริงออกมาดูใน Debug Console ก่อน ว่าสาเหตุคืออะไร
       // (ลบบรรทัด print นี้ทิ้งได้หลังจากหาสาเหตุเจอแล้ว)
       debugPrint('ProfileScreen._load error: $e');
       if (mounted) setState(() { _loading = false; _hasError = true; });
-      return;
     }
-
-    final profile = results[0] as Map<String, dynamic>?;
-    final posts = results[1] as List<Post>;
-    final followerCount = results[2] as int;
-
-    if (!mounted) return;
-    setState(() {
-      _username = profile?['username'] as String? ?? 'unknown';
-      _photoBase64 = profile?['photoBase64'] as String?;
-      _posts = posts;
-      _totalUpvotes = posts.fold<int>(0, (sum, p) => sum + p.upvoteCount);
-      _totalDownvotes = posts.fold<int>(0, (sum, p) => sum + p.downvoteCount);
-      _followerCount = followerCount;
-      // friendCount เก็บเป็นตัวเลขสะสมในโปรไฟล์โดยตรง (ไม่ query friendships
-      // สดแบบ follower เพราะอ่านเอกสารมิตรภาพของคนอื่นที่เราไม่ใช่คู่สัญญา
-      // ไม่ได้ตาม rules — อัปเดตค่านี้ตอนยอมรับ/เลิกเป็นเพื่อนใน friend_service.dart)
-      _friendCount = profile?['friendCount'] as int? ?? 0;
-      _loading = false;
-    });
   }
 
   Future<void> _openEditProfile() async {
@@ -108,10 +140,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เปิดแชทไม่สำเร็จ ลองใหม่อีกครั้ง')),
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
     }
@@ -150,28 +182,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             _buildHeader(context),
             const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-              child: Text(
-                'โพสต์ (${_posts.length})',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-            if (_posts.isEmpty)
+            if (!_canViewContent)
               const Padding(
-                padding: EdgeInsets.all(32),
+                padding: EdgeInsets.all(40),
                 child: Center(
-                  child: Text(
-                    'ยังไม่มีโพสต์',
-                    style: TextStyle(color: Colors.black45),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lock_outline, size: 40, color: Colors.black26),
+                      SizedBox(height: 10),
+                      Text(
+                        'บัญชีนี้เป็นส่วนตัว',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'เป็นเพื่อนกันก่อนถึงจะเห็นโพสต์ของบัญชีนี้ได้',
+                        style: TextStyle(color: Colors.black45, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                   ),
                 ),
               )
-            else
-              ..._posts.map((post) => PostCard(key: ValueKey(post.id), post: post)),
+            else ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Text(
+                  'โพสต์ (${_posts.length})',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (_posts.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(
+                    child: Text(
+                      'ยังไม่มีโพสต์',
+                      style: TextStyle(color: Colors.black45),
+                    ),
+                  ),
+                )
+              else
+                ..._posts.map((post) => PostCard(key: ValueKey(post.id), post: post)),
+            ],
           ],
         ),
       ),
@@ -202,20 +259,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : null,
           ),
           const SizedBox(height: 10),
-          Text(
-            'u/$_username',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 16),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _StatItem(label: 'ถูกใจ', value: _totalUpvotes),
-              _StatItem(label: 'ไม่ถูกใจ', value: _totalDownvotes),
-              _StatItem(label: 'ผู้ติดตาม', value: _followerCount),
-              _StatItem(label: 'เพื่อน', value: _friendCount),
+              Text(
+                'u/$_username',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+              if (_isPrivate && !_isMe) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.lock_outline, size: 16, color: Colors.black45),
+              ],
             ],
           ),
+          const SizedBox(height: 16),
+          if (_canViewContent)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _StatItem(label: 'ถูกใจ', value: _totalUpvotes),
+                _StatItem(label: 'ไม่ถูกใจ', value: _totalDownvotes),
+                _StatItem(label: 'ผู้ติดตาม', value: _followerCount),
+                _StatItem(label: 'เพื่อน', value: _friendCount),
+              ],
+            ),
           const SizedBox(height: 16),
           if (_isMe)
             OutlinedButton.icon(
@@ -231,11 +298,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 FriendActionButton(uid: widget.uid, username: _username),
                 FollowActionButton(uid: widget.uid, username: _username),
-                OutlinedButton.icon(
-                  onPressed: _openChat,
-                  icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                  label: const Text('แชท'),
-                ),
+                // บัญชี private ที่ยังไม่ใช่เพื่อนกัน ซ่อนปุ่มแชทไปเลย
+                // (ยังกดส่งคำขอเป็นเพื่อนได้ตามปกติ แค่แชทไม่ได้จนกว่าจะรับคำขอ)
+                if (!_isPrivate || _isFriend)
+                  OutlinedButton.icon(
+                    onPressed: _openChat,
+                    icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                    label: const Text('แชท'),
+                  ),
               ],
             ),
         ],

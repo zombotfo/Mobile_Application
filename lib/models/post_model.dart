@@ -14,6 +14,8 @@ class Post {
     this.reactionCounts = const {},
     this.imageBase64,
     this.videoUrl,
+    this.communityId,
+    this.communityName,
   });
 
   final String id;
@@ -27,6 +29,8 @@ class Post {
   final int commentCount;
   final Map<String, int> reactionCounts; // เช่น {'❤️': 3, '😂': 1}
   final String? imageBase64; // รูปภาพ: เก็บเป็น Base64 ฝังในเอกสารนี้เลย
+  final String? communityId; // null = โพสต์ทั่วไป ไม่ได้อยู่ในชุมชนไหน
+  final String? communityName;
   final String? videoUrl; // วิดีโอ: ไฟล์ใหญ่เกินจะฝัง จึงอัปโหลดขึ้น
   // Cloudinary แล้วเก็บแค่ลิงก์ไว้ตรงนี้แทน (โพสต์หนึ่งมีได้แค่รูปหรือ
   // วิดีโออย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่พร้อมกัน)
@@ -53,6 +57,8 @@ class Post {
       ),
       imageBase64: data['imageBase64'] as String?,
       videoUrl: data['videoUrl'] as String?,
+      communityId: data['communityId'] as String?,
+      communityName: data['communityName'] as String?,
     );
   }
 }

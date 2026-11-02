@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/post_model.dart';
 import '../screens/chat_detail_screen.dart';
+import '../screens/community_screen.dart';
 import '../screens/edit_post_screen.dart';
 import '../screens/post_detail_screen.dart';
 import '../screens/profile_screen.dart';
@@ -154,10 +155,10 @@ class _PostCardState extends State<PostCard> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เปิดแชทไม่สำเร็จ ลองใหม่อีกครั้ง')),
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
       }
     }
@@ -240,6 +241,31 @@ class _PostCardState extends State<PostCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // โพสต์ที่อยู่ในชุมชน แสดงชื่อ r/ชุมชน เหนือแถวผู้เขียน (แตะเพื่อเปิดชุมชน)
+            if (post.communityId != null) ...[
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: widget.inDetailView
+                    ? null
+                    : () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                CommunityScreen(communityId: post.communityId!),
+                          ),
+                        ),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'r/${post.communityName ?? post.communityId}',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
             Row(
               children: [
                 InkWell(

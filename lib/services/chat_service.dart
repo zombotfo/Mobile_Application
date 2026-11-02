@@ -34,13 +34,32 @@ class ChatService {
   }
 
   /// สร้างห้องแชทถ้ายังไม่มี (merge กันทับของเดิม) แล้วคืน chatId ไปเปิดต่อ
-  /// ใช้ได้กับผู้ใช้คนไหนก็ได้ ไม่เช็คสถานะเพื่อนเลย
+  /// ใช้ได้กับผู้ใช้คนไหนก็ได้ตามปกติ — ยกเว้นถ้าอีกฝ่ายตั้งบัญชีเป็น
+  /// private ไว้ จะทักได้เฉพาะตอนเป็นเพื่อนกันแล้วเท่านั้น
   Future<String> startChat({
     required String otherUid,
     required String otherUsername,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
+
+    if (user.uid != otherUid) {
+      final targetDoc = await _users.doc(otherUid).get();
+      final isPrivate = targetDoc.data()?['isPrivate'] as bool? ?? false;
+      if (isPrivate) {
+        final sorted = [user.uid, otherUid]..sort();
+        final friendshipDoc = await _db
+            .collection('friendships')
+            .doc('${sorted[0]}_${sorted[1]}')
+            .get();
+        final isFriend = friendshipDoc.data()?['status'] == 'accepted';
+        if (!isFriend) {
+          throw Exception(
+            'บัญชีนี้เป็นส่วนตัว ต้องเป็นเพื่อนกันก่อนถึงจะส่งข้อความได้',
+          );
+        }
+      }
+    }
 
     final chatId = chatIdFor(user.uid, otherUid);
     final myProfile = await _users.doc(user.uid).get();

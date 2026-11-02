@@ -37,7 +37,15 @@ class FirestoreService {
       'email': email,
       'createdAt': FieldValue.serverTimestamp(),
       'postKarma': 0,
+      'isPrivate': false,
     });
+  }
+
+  /// UPDATE: เปลี่ยนสถานะบัญชีเป็น public/private
+  Future<void> updatePrivacy(bool isPrivate) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
+    await _users.doc(user.uid).update({'isPrivate': isPrivate});
   }
 
   /// สตรีมโพสต์ทั้งหมดแบบเรียลไทม์ (เก็บไว้เผื่อใช้ในอนาคต — หน้า feed
@@ -66,6 +74,8 @@ class FirestoreService {
     required String body,
     Uint8List? imageBytes,
     Uint8List? videoBytes,
+    String? communityId,
+    String? communityName,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
@@ -97,6 +107,10 @@ class FirestoreService {
       'body': body.trim(),
       'imageBase64': imageBytes != null ? base64Encode(imageBytes) : null,
       'videoUrl': videoUrl,
+      // null = โพสต์ทั่วไป / มีค่า = โพสต์ในชุมชนนั้น (เห็นในหน้า home
+      // เฉพาะคนที่เป็นสมาชิกชุมชน ดู CommunityService.filterVisible)
+      'communityId': communityId,
+      'communityName': communityName,
       'createdAt': FieldValue.serverTimestamp(),
       'upvoteCount': 0,
       'downvoteCount': 0,

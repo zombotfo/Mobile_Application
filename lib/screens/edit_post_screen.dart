@@ -122,6 +122,10 @@ class _EditPostScreenState extends State<EditPostScreen> {
         createdAt: widget.post.createdAt,
         upvoteCount: widget.post.upvoteCount,
         commentCount: widget.post.commentCount,
+        downvoteCount: widget.post.downvoteCount,
+        reactionCounts: widget.post.reactionCounts,
+        communityId: widget.post.communityId,
+        communityName: widget.post.communityName,
         imageBase64: _removeImage
             ? null
             : (_newImageBytes != null
