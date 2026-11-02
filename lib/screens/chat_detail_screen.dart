@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/chat_message_model.dart';
 import '../services/chat_service.dart';
@@ -29,6 +31,55 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       _chatService.messagesStream(widget.chatId);
 
   bool _sending = false;
+  final _picker = ImagePicker();
+
+  Future<void> _pickMedia({required bool video}) async {
+    if (_sending) return;
+    final file = video
+        ? await _picker.pickVideo(source: ImageSource.gallery)
+        : await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (file == null || !mounted) return;
+    setState(() => _sending = true);
+    try {
+      await _chatService.sendMedia(
+        chatId: widget.chatId,
+        file: file,
+        mediaType: video ? 'video' : 'image',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ส่งไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _showEmojiPicker() async {
+    const emojis = ['😀','😃','😄','😁','😆','😂','🥹','😊','😍','🥰','😘','😎','🤔','😭','😡','👍','👎','👏','🙏','🎉','❤️','🔥','✨','💯','🐱','🌟'];
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: GridView.count(
+          shrinkWrap: true,
+          crossAxisCount: 7,
+          children: [for (final value in emojis) TextButton(onPressed: () => Navigator.pop(context, value), child: Text(value, style: const TextStyle(fontSize: 26)))],
+        ),
+      ),
+    );
+    if (emoji == null) return;
+    final value = _textController.value;
+    final text = value.text;
+    final start = value.selection.start < 0 ? text.length : value.selection.start;
+    final end = value.selection.end < 0 ? start : value.selection.end;
+    final updated = text.replaceRange(start, end, emoji);
+    _textController.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+  }
 
   @override
   void dispose() {
@@ -106,11 +157,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           color: isMe ? colors.primary : const Color(0xFFF0F0F1),
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: Text(
-                          msg.text,
-                          style: TextStyle(
-                            color: isMe ? Colors.white : Colors.black87,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (msg.mediaUrl != null && msg.mediaType == 'image')
+                              ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(msg.mediaUrl!, width: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('โหลดรูปไม่สำเร็จ'))),
+                            if (msg.mediaUrl != null && msg.mediaType == 'video')
+                              _ChatVideo(url: msg.mediaUrl!),
+                            if (msg.text.isNotEmpty)
+                              Text(msg.text, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
+                          ],
                         ),
                       ),
                     );
@@ -125,6 +181,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               padding: const EdgeInsets.all(8),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: 'ส่งรูปภาพ',
+                    icon: const Icon(Icons.image_outlined),
+                    onPressed: _sending ? null : () => _pickMedia(video: false),
+                  ),
+                  IconButton(
+                    tooltip: 'ส่งวิดีโอ',
+                    icon: const Icon(Icons.video_library_outlined),
+                    onPressed: _sending ? null : () => _pickMedia(video: true),
+                  ),
+                  IconButton(
+                    tooltip: 'Emoji',
+                    icon: const Icon(Icons.emoji_emotions_outlined),
+                    onPressed: _showEmojiPicker,
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _textController,
@@ -154,6 +225,39 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ChatVideo extends StatefulWidget {
+  const _ChatVideo({required this.url});
+  final String url;
+
+  @override
+  State<_ChatVideo> createState() => _ChatVideoState();
+}
+
+class _ChatVideoState extends State<_ChatVideo> {
+  late final VideoPlayerController _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))..initialize().then((_) { if (mounted) setState(() {}); });
+
+  @override
+  void dispose() { _controller.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_controller.value.isInitialized) return const SizedBox(width: 220, height: 140, child: Center(child: CircularProgressIndicator()));
+    return SizedBox(
+      width: 220,
+      child: AspectRatio(
+        aspectRatio: _controller.value.aspectRatio,
+        child: Stack(alignment: Alignment.center, children: [
+          VideoPlayer(_controller),
+          IconButton.filledTonal(
+            onPressed: () => setState(() => _controller.value.isPlaying ? _controller.pause() : _controller.play()),
+            icon: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
+          ),
+        ]),
       ),
     );
   }

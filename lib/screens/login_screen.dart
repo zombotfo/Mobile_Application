@@ -92,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final colors = theme.colorScheme;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -133,7 +133,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ? 'กลับมาคุยต่อในชุมชนของคุณ'
                           : 'เลือกชื่อผู้ใช้ แล้วเริ่มโพสต์ได้เลย',
                       style: theme.textTheme.bodyLarge?.copyWith(
-                        color: Colors.black54,
+                        color: colors.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(height: 32),
@@ -258,7 +258,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       children: [
                         Text(
                           _isLogin ? 'ยังไม่มีบัญชี?' : 'มีบัญชีอยู่แล้ว?',
-                          style: const TextStyle(color: Colors.black54),
+                          style: TextStyle(color: colors.onSurfaceVariant),
                         ),
                         TextButton(
                           onPressed: _loading ? null : _toggleMode,

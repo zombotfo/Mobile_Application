@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/chat_message_model.dart';
 import '../models/chat_model.dart';
@@ -7,6 +9,7 @@ import '../models/chat_model.dart';
 /// ระบบแชท 1:1 คุยกับใครก็ได้ ไม่ต้องเป็นเพื่อนกันก่อน
 class ChatService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _db.collection('users');
@@ -106,6 +109,36 @@ class ChatService {
     });
     batch.update(chatRef, {
       'lastMessage': trimmed,
+      'lastMessageAt': FieldValue.serverTimestamp(),
+      'lastSenderId': user.uid,
+    });
+    await batch.commit();
+  }
+
+  Future<void> sendMedia({
+    required String chatId,
+    required XFile file,
+    required String mediaType,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
+    final extension = file.name.contains('.') ? file.name.split('.').last : 'bin';
+    final ref = _storage.ref('chats/$chatId/${DateTime.now().millisecondsSinceEpoch}_${user.uid}.$extension');
+    final bytes = await file.readAsBytes();
+    await ref.putData(bytes, SettableMetadata(contentType: file.mimeType));
+    final url = await ref.getDownloadURL();
+    final label = mediaType == 'image' ? 'ส่งรูปภาพ' : 'ส่งวิดีโอ';
+    final chatRef = _chats.doc(chatId);
+    final batch = _db.batch();
+    batch.set(chatRef.collection('messages').doc(), {
+      'senderId': user.uid,
+      'text': '',
+      'mediaUrl': url,
+      'mediaType': mediaType,
+      'sentAt': FieldValue.serverTimestamp(),
+    });
+    batch.update(chatRef, {
+      'lastMessage': label,
       'lastMessageAt': FieldValue.serverTimestamp(),
       'lastSenderId': user.uid,
     });
