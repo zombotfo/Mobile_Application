@@ -48,6 +48,12 @@ class FirestoreService {
     await _users.doc(user.uid).update({'isPrivate': isPrivate});
   }
 
+  Future<void> updateAccountEmail(String email) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('No signed-in user');
+    await _users.doc(user.uid).update({'email': email});
+  }
+
   /// สตรีมโพสต์ทั้งหมดแบบเรียลไทม์ (เก็บไว้เผื่อใช้ในอนาคต — หน้า feed
   /// ปัจจุบันเปลี่ยนไปใช้ fetchPosts() แบบ poll เป็นรอบแทนแล้ว)
   Stream<List<Post>> postsStream() {

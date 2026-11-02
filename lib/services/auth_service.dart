@@ -42,6 +42,24 @@ class AuthService {
     return _auth.sendPasswordResetEmail(email: email.trim());
   }
 
+  Future<void> requestEmailChange({
+    required String newEmail,
+    required String currentPassword,
+  }) async {
+    final user = _auth.currentUser;
+    final currentEmail = user?.email;
+    if (user == null || currentEmail == null) {
+      throw FirebaseAuthException(code: 'no-current-user');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: currentEmail,
+      password: currentPassword,
+    );
+    await user.reauthenticateWithCredential(credential);
+    await user.verifyBeforeUpdateEmail(newEmail.trim());
+  }
+
   Future<void> signOut() => _auth.signOut();
 
   /// แปลง error code ของ Firebase เป็นข้อความที่ผู้ใช้เข้าใจ
@@ -59,6 +77,13 @@ class AuthService {
         return 'อีเมลนี้ถูกใช้สมัครไปแล้ว ลองเข้าสู่ระบบแทน';
       case 'weak-password':
         return 'รหัสผ่านสั้นเกินไป ใช้อย่างน้อย 6 ตัวอักษร';
+      case 'requires-recent-login':
+        return 'เพื่อความปลอดภัย กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ก่อนเปลี่ยนอีเมล';
+      case 'no-current-user':
+        return 'ไม่พบผู้ใช้ที่เข้าสู่ระบบ กรุณาเข้าสู่ระบบใหม่';
+      case 'invalid-verification-code':
+      case 'expired-action-code':
+        return 'ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่';
       case 'too-many-requests':
         return 'ลองหลายครั้งเกินไป รอสักครู่แล้วลองใหม่';
       case 'network-request-failed':
