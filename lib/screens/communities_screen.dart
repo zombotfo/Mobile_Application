@@ -89,7 +89,11 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
       ),
       subtitle: Text('${c.memberCount} สมาชิก'),
       trailing: c.requiresApproval
-          ? const Icon(Icons.lock_outline, size: 18, color: Colors.black38)
+          ? Icon(
+              Icons.lock_outline,
+              size: 18,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            )
           : null,
       onTap: () => _open(c),
     );
@@ -102,7 +106,9 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
         return Center(
           child: Text(
             'ไม่พบชุมชนที่ตรงกับ "${_searchController.text}"',
-            style: const TextStyle(color: Colors.black45),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         );
       }
@@ -120,13 +126,15 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
       onRefresh: _loadMine,
       child: _mine!.isEmpty
           ? ListView(
-              children: const [
+              children: [
                 Padding(
                   padding: EdgeInsets.all(40),
                   child: Text(
                     'ยังไม่ได้เข้าร่วมชุมชนไหนเลย\nค้นหาชุมชนด้านบน หรือกดปุ่ม "สร้างชุมชน" เพื่อเริ่มต้น',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.black45),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -162,7 +170,7 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
                 hintText: 'ค้นหาชุมชน...',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 filled: true,
-                fillColor: const Color(0xFFF0F0F1),
+                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
                   borderSide: BorderSide.none,

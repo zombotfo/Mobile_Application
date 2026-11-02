@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_theme.dart';
 import '../services/firestore_service.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -60,6 +61,22 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                const ListTile(
+                  title: Text('ธีมสี'),
+                  subtitle: Text('เลือกสีที่ใช้ในแอป'),
+                ),
+                ValueListenableBuilder<AppThemeChoice>(
+                  valueListenable: AppTheme.choice,
+                  builder: (context, selected, _) => Column(
+                    children: [
+                      _themeOption(AppThemeChoice.red, selected, 'แดง',
+                          const Color(0xFFED4245)),
+                      _themeOption(AppThemeChoice.green, selected, 'เขียว',
+                          const Color(0xFF3BA55C)),
+                    ],
+                  ),
+                ),
+                const Divider(),
                 SwitchListTile(
                   title: const Text('บัญชีส่วนตัว (Private)'),
                   subtitle: Text(
@@ -71,16 +88,34 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                   value: _isPrivate,
                   onChanged: _saving ? null : _setPrivacy,
                 ),
-                const Padding(
+                Padding(
                   padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
                   child: Text(
                     'หมายเหตุ: ไม่ว่าจะตั้งเป็นส่วนตัวหรือไม่ ใครก็ยังส่งคำขอเป็น'
                     'เพื่อนมาหาคุณได้ตามปกติ',
-                    style: TextStyle(fontSize: 12.5, color: Colors.black45),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
             ),
     );
   }
+
+  Widget _themeOption(
+    AppThemeChoice choice,
+    AppThemeChoice selected,
+    String label,
+    Color color,
+  ) => RadioListTile<AppThemeChoice>(
+        value: choice,
+        groupValue: selected,
+        onChanged: (value) {
+          if (value != null) AppTheme.choice.value = value;
+        },
+        title: Text(label),
+        secondary: CircleAvatar(radius: 12, backgroundColor: color),
+      );
 }

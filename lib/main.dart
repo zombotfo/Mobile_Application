@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
+import 'app_theme.dart';
 import 'firebase_options.dart'; // สร้างโดยคำสั่ง `flutterfire configure`
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -17,25 +18,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ValueListenableBuilder<AppThemeChoice>(
+      valueListenable: AppTheme.choice,
+      builder: (context, choice, _) => MaterialApp(
       title: 'Community',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFF4500),
-          brightness: Brightness.light,
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFFF4F4F5),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-        ),
-      ),
+      theme: AppTheme.build(choice),
       home: const AuthGate(),
+      ),
     );
   }
 }

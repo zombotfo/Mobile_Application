@@ -84,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : '?';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F8),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -103,7 +103,8 @@ class _HomeScreenState extends State<HomeScreen> {
               child: switch (_tabIndex) {
                 0 => FeedScreen(key: _feedKey, searchQuery: _searchQuery),
                 1 => const CommunitiesScreen(),
-                _ => const ChatListScreen(),
+                2 => const ChatListScreen(),
+                _ => ProfileScreen(uid: user.uid),
               },
             ),
           ],
@@ -114,6 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onHome: () => setState(() => _tabIndex = 0),
         onCommunities: () => setState(() => _tabIndex = 1),
         onChat: () => setState(() => _tabIndex = 2),
+        onProfile: () => setState(() => _tabIndex = 3),
         onCreate: _openCreatePost,
       ),
     );
@@ -242,23 +244,26 @@ class _TopBar extends StatelessWidget {
             child: Container(
               height: 40,
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F0F1),
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: TextField(
                 controller: controller,
                 onChanged: onChanged,
                 textInputAction: TextInputAction.search,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
                   border: InputBorder.none,
                   prefixIcon: Icon(
                     Icons.search,
                     size: 20,
-                    color: Colors.black45,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                   hintText: 'ค้นหาโพสต์...',
-                  hintStyle: TextStyle(fontSize: 14, color: Colors.black45),
+                  hintStyle: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ),
@@ -318,6 +323,7 @@ class _BottomNavBar extends StatelessWidget {
     required this.onHome,
     required this.onCommunities,
     required this.onChat,
+    required this.onProfile,
     required this.onCreate,
   });
 
@@ -325,6 +331,7 @@ class _BottomNavBar extends StatelessWidget {
   final VoidCallback onHome;
   final VoidCallback onCommunities;
   final VoidCallback onChat;
+  final VoidCallback onProfile;
   final VoidCallback onCreate;
 
   @override
@@ -333,9 +340,11 @@ class _BottomNavBar extends StatelessWidget {
       top: false,
       child: Container(
         height: 62,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Color(0xFFE5E5E5))),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+              border: Border(
+                top: BorderSide(color: Theme.of(context).dividerColor),
+              ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -360,6 +369,12 @@ class _BottomNavBar extends StatelessWidget {
               selected: currentIndex == 2,
               onTap: onChat,
             ),
+            _NavItem(
+              icon: Icons.person_rounded,
+              label: 'หน้าโปรไฟล์',
+              selected: currentIndex == 3,
+              onTap: onProfile,
+            ),
           ],
         ),
       ),
@@ -383,12 +398,14 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color =
-        selected ? Theme.of(context).colorScheme.primary : Colors.black45;
+        selected
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.onSurfaceVariant;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
