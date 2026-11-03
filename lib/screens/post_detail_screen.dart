@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/comment_model.dart';
 import '../models/post_model.dart';
+import '../services/chat_service.dart';
 import '../services/firestore_service.dart';
 import '../utils/time_ago.dart';
 import '../widgets/post_card.dart';
@@ -18,12 +21,13 @@ class PostDetailScreen extends StatefulWidget {
 
 class _PostDetailScreenState extends State<PostDetailScreen> {
   final _firestoreService = FirestoreService();
+  final _chatService = ChatService();
   final _commentController = TextEditingController();
   final _myUid = FirebaseAuth.instance.currentUser?.uid;
 
   late Post _post = widget.post;
-  late final Stream<List<Comment>> _commentsStream =
-      _firestoreService.commentsStream(widget.post.id);
+  late final Stream<List<Comment>> _commentsStream = _firestoreService
+      .commentsStream(widget.post.id);
   bool _sending = false;
 
   @override
@@ -108,8 +112,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                   child: Text(
                     'ความคิดเห็น',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 StreamBuilder<List<Comment>>(
@@ -118,9 +122,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     if (snapshot.hasError) {
                       return const Padding(
                         padding: EdgeInsets.all(24),
-                        child: Center(
-                          child: Text('โหลดความคิดเห็นไม่สำเร็จ'),
-                        ),
+                        child: Center(child: Text('โหลดความคิดเห็นไม่สำเร็จ')),
                       );
                     }
                     if (!snapshot.hasData) {
@@ -146,44 +148,68 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     return Column(
                       children: comments.map((c) {
                         final isOwner = c.authorId == _myUid;
-                        return ListTile(
-                          leading: CircleAvatar(
-                            radius: 14,
-                            child: Text(
-                              c.authorUsername.isNotEmpty
-                                  ? c.authorUsername[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          title: Text(
-                            'u/${c.authorUsername}',
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(c.text),
-                          ),
-                          trailing: isOwner
-                              ? IconButton(
-                                  tooltip: 'ลบความคิดเห็น',
-                                  icon: const Icon(
-                                    Icons.delete_outline,
-                                    size: 18,
-                                    color: Colors.black38,
-                                  ),
-                                  onPressed: () => _confirmDeleteComment(c),
-                                )
-                              : Text(
-                                  timeAgo(c.createdAt),
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.black38,
-                                  ),
+                        return StreamBuilder<Map<String, dynamic>?>(
+                          stream: _chatService.userProfileStream(c.authorId),
+                          builder: (context, profileSnapshot) {
+                            final profile = profileSnapshot.data;
+                            final username =
+                                profile?['username'] as String? ??
+                                c.authorUsername;
+                            final encodedPhoto =
+                                profile?['photoBase64'] as String?;
+                            ImageProvider<Object>? photo;
+                            if (encodedPhoto != null &&
+                                encodedPhoto.isNotEmpty) {
+                              try {
+                                photo = MemoryImage(base64Decode(encodedPhoto));
+                              } on FormatException {
+                                // Fall back to the author's initial for invalid image data.
+                              }
+                            }
+
+                            return ListTile(
+                              leading: CircleAvatar(
+                                radius: 14,
+                                backgroundImage: photo,
+                                child: photo == null
+                                    ? Text(
+                                        username.isNotEmpty
+                                            ? username[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(fontSize: 12),
+                                      )
+                                    : null,
+                              ),
+                              title: Text(
+                                'u/$username',
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
                                 ),
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(c.text),
+                              ),
+                              trailing: isOwner
+                                  ? IconButton(
+                                      tooltip: 'ลบความคิดเห็น',
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
+                                        color: Colors.black38,
+                                      ),
+                                      onPressed: () => _confirmDeleteComment(c),
+                                    )
+                                  : Text(
+                                      timeAgo(c.createdAt),
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.black38,
+                                      ),
+                                    ),
+                            );
+                          },
                         );
                       }).toList(),
                     );
