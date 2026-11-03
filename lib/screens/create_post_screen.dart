@@ -68,7 +68,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Future<void> _pickImage() async {
-    // ความละเอียด/คุณภาพต่ำกว่าปกติหน่อย เพราะรูปจะถูกเก็บเป็น Base64
+    // Resize ก่อนอัปโหลด เพื่อให้ส่งขึ้น Cloudinary ได้รวดเร็วขึ้น
     // ฝังในเอกสาร Firestore โดยตรง (จำกัดขนาดเอกสารไม่เกิน ~1MB)
     final picked = await ImagePicker().pickImage(
       source: ImageSource.gallery,

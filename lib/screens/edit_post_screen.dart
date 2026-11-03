@@ -33,7 +33,10 @@ class _EditPostScreenState extends State<EditPostScreen> {
   bool _saving = false;
 
   bool get _hasImage =>
-      !_removeImage && (_newImageBytes != null || widget.post.imageBase64 != null);
+      !_removeImage &&
+      (_newImageBytes != null ||
+          widget.post.imageUrl != null ||
+          widget.post.imageBase64 != null);
   bool get _hasExistingVideo => !_removeVideo && widget.post.videoUrl != null;
   bool get _hasNewVideo => _newVideoBytes != null;
   bool get _hasAnyMedia => _hasImage || _hasExistingVideo || _hasNewVideo;
@@ -100,7 +103,7 @@ class _EditPostScreenState extends State<EditPostScreen> {
     setState(() => _saving = true);
 
     try {
-      await _firestoreService.updatePost(
+      final uploadedImageUrl = await _firestoreService.updatePost(
         postId: widget.post.id,
         title: _titleController.text,
         body: _bodyController.text,
@@ -129,8 +132,11 @@ class _EditPostScreenState extends State<EditPostScreen> {
         imageBase64: _removeImage
             ? null
             : (_newImageBytes != null
-                ? base64Encode(_newImageBytes!)
+                ? null
                 : widget.post.imageBase64),
+        imageUrl: _removeImage
+            ? null
+            : (uploadedImageUrl ?? widget.post.imageUrl),
         videoUrl: _removeVideo
             ? null
             : (_newVideoBytes == null ? widget.post.videoUrl : null),
@@ -266,6 +272,27 @@ class _EditPostScreenState extends State<EditPostScreen> {
     }
 
     // เหลือกรณีมีรูปภาพ (เดิมหรือใหม่)
+    if (_newImageBytes == null && widget.post.imageUrl != null) {
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              widget.post.imageUrl!,
+              width: double.infinity,
+              height: 220,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => const SizedBox(
+                height: 220,
+                child: Center(child: Icon(Icons.broken_image_outlined)),
+              ),
+            ),
+          ),
+          _removeButton(),
+        ],
+      );
+    }
+
     final bytes = _newImageBytes ?? base64Decode(widget.post.imageBase64!);
     return Stack(
       children: [

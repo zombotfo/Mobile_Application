@@ -5,8 +5,10 @@ import '../models/community_model.dart';
 import '../models/post_model.dart';
 import '../services/community_service.dart';
 import '../widgets/community_avatar.dart';
+import '../widgets/notification_dot.dart';
 import '../widgets/post_card.dart';
 import 'community_requests_screen.dart';
+import 'community_members_screen.dart';
 import 'create_post_screen.dart';
 
 /// หน้าชุมชน: ข้อมูลชุมชน ปุ่มเข้าร่วม/ออก และโพสต์ในชุมชน
@@ -21,6 +23,8 @@ class CommunityScreen extends StatefulWidget {
 
 class _CommunityScreenState extends State<CommunityScreen> {
   final _service = CommunityService();
+  late final Stream<int> _pendingRequestCountStream =
+      _service.pendingRequestsCountStream(widget.communityId);
 
   bool _loading = true;
   bool _hasError = false;
@@ -118,6 +122,43 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ลบชุมชนนี้?'),
+        content: Text(
+          'คุณกำลังจะลบ r/${_community!.name} รวมถึงโพสต์และสมาชิกทั้งหมด การลบนี้ย้อนกลับไม่ได้',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ยกเลิก'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('ลบชุมชน', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _working = true);
+    try {
+      await _service.deleteCommunity(widget.communityId);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ลบชุมชนไม่สำเร็จ: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
   Future<void> _openCreatePost() async {
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -134,6 +175,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
       ),
     );
     _load(); // อนุมัติแล้วจำนวนสมาชิกเปลี่ยน
+  }
+
+  void _openMembers() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CommunityMembersScreen(communityId: widget.communityId),
+      ),
+    );
   }
 
   @override
@@ -259,9 +308,22 @@ class _CommunityScreenState extends State<CommunityScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 6,
             children: [
-              Text(
-                '${community.memberCount} สมาชิก',
-                style: const TextStyle(color: Colors.black54, fontSize: 13),
+              InkWell(
+                onTap: !community.requiresApproval || isActive
+                    ? _openMembers
+                    : null,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    '${community.memberCount} สมาชิก · ดูรายชื่อ',
+                    style: const TextStyle(
+                      color: Colors.black54,
+                      fontSize: 13,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
               ),
               const Text('·', style: TextStyle(color: Colors.black38)),
               Icon(
@@ -294,8 +356,23 @@ class _CommunityScreenState extends State<CommunityScreen> {
               if (_isOwner && community.requiresApproval)
                 OutlinedButton.icon(
                   onPressed: _openRequests,
-                  icon: const Icon(Icons.how_to_reg_outlined, size: 18),
+                  icon: StreamBuilder<int>(
+                    stream: _pendingRequestCountStream,
+                    builder: (context, snapshot) => NotificationDot(
+                      show: (snapshot.data ?? 0) > 0,
+                      child: const Icon(Icons.how_to_reg_outlined, size: 18),
+                    ),
+                  ),
                   label: const Text('คำขอเข้าร่วม'),
+                ),
+              if (_isOwner)
+                OutlinedButton.icon(
+                  onPressed: _working ? null : _confirmDelete,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('ลบชุมชน'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                  ),
                 ),
               // เจ้าของชุมชนออกจากชุมชนตัวเองไม่ได้
               if (isActive && !_isOwner)

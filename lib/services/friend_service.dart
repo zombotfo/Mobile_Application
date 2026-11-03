@@ -141,6 +141,20 @@ class FriendService {
         .toList();
   }
 
+  /// Live count of incoming friend requests that still need a response.
+  Stream<int> incomingRequestsCountStream() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return Stream<int>.value(0);
+
+    return _friendships
+        .where('participants', arrayContains: user.uid)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map((snap) => snap.docs.where((doc) {
+              return doc.data()['requestedBy'] != user.uid;
+            }).length);
+  }
+
   /// เพื่อนที่ยอมรับกันแล้วทั้งหมดของผู้ใช้คนปัจจุบัน
   Future<List<Friendship>> fetchFriends() async {
     final user = FirebaseAuth.instance.currentUser;

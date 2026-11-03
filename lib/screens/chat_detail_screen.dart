@@ -1,25 +1,29 @@
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:video_player/video_player.dart';
 
 import '../models/chat_message_model.dart';
 import '../services/chat_service.dart';
+import '../widgets/post_video_player.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   const ChatDetailScreen({
     super.key,
     required this.chatId,
+    required this.otherUserId,
     required this.otherUsername,
   });
 
   final String chatId;
+  final String otherUserId;
   final String otherUsername;
 
   @override
   State<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
-
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final _chatService = ChatService();
   final _textController = TextEditingController();
@@ -29,27 +33,74 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   // กันไม่ให้ subscribe ใหม่ทุกครั้งที่ widget rebuild
   late final Stream<List<ChatMessage>> _messagesStream =
       _chatService.messagesStream(widget.chatId);
+  late final Stream<Map<String, dynamic>?> _otherProfileStream =
+      _chatService.userProfileStream(widget.otherUserId);
 
   bool _sending = false;
   final _picker = ImagePicker();
 
-  Future<void> _pickMedia({required bool video}) async {
+  Future<void> _pickImage() async {
     if (_sending) return;
-    final file = video
-        ? await _picker.pickVideo(source: ImageSource.gallery)
-        : await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (file == null || !mounted) return;
     setState(() => _sending = true);
     try {
-      await _chatService.sendMedia(
+      final file = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1280,
+        maxHeight: 1280,
+        imageQuality: 55,
+      );
+      if (file == null || !mounted) return;
+      await _chatService.sendImage(
         chatId: widget.chatId,
         file: file,
-        mediaType: video ? 'video' : 'image',
       );
-    } catch (_) {
+    } on FirebaseException catch (e) {
+      debugPrint('Chat image send failed (${e.code}): ${e.message}');
+      if (mounted) {
+        final message = e.code == 'permission-denied'
+            ? 'ไม่มีสิทธิ์ส่งรูปในห้องแชทนี้'
+            : 'ส่งรูปไม่สำเร็จ (${e.code}) ${e.message ?? ''}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } catch (error) {
+      debugPrint('Chat image selection or send failed: $error');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ส่งไฟล์ไม่สำเร็จ กรุณาลองอีกครั้ง')),
+          SnackBar(
+            content: Text(
+              error.toString().replaceFirst('Exception: ', ''),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final file = await _picker.pickVideo(source: ImageSource.gallery);
+      if (file == null || !mounted) return;
+      await _chatService.sendVideo(chatId: widget.chatId, file: file);
+    } on FirebaseException catch (e) {
+      debugPrint('Chat video message failed (${e.code}): ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ส่งวิดีโอไม่สำเร็จ: ${e.message ?? e.code}')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Chat video selection or upload failed: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', '')),
+          ),
         );
       }
     } finally {
@@ -111,7 +162,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final colors = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: Text('u/${widget.otherUsername}')),
+      appBar: AppBar(
+        title: StreamBuilder<Map<String, dynamic>?>(
+          stream: _otherProfileStream,
+          builder: (context, snapshot) {
+            final username =
+                snapshot.data?['username'] as String? ?? widget.otherUsername;
+            return Text('u/$username');
+          },
+        ),
+      ),
       body: Column(
         children: [
           Expanded(
@@ -140,30 +200,66 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   itemBuilder: (context, index) {
                     final msg = messages[index];
                     final isMe = msg.senderId == _myUid;
+                    final isMediaOnly = msg.text.isEmpty &&
+                        (msg.mediaBase64 != null || msg.mediaUrl != null);
                     return Align(
                       key: ValueKey(msg.id),
                       alignment:
                           isMe ? Alignment.centerRight : Alignment.centerLeft,
                       child: Container(
                         margin: const EdgeInsets.symmetric(vertical: 4),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
+                        padding: isMediaOnly
+                            ? EdgeInsets.zero
+                            : const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
                         constraints: BoxConstraints(
                           maxWidth: MediaQuery.of(context).size.width * 0.7,
                         ),
                         decoration: BoxDecoration(
-                          color: isMe ? colors.primary : const Color(0xFFF0F0F1),
+                          color: isMediaOnly
+                              ? Colors.transparent
+                              : isMe
+                                  ? colors.primary
+                                  : const Color(0xFFF0F0F1),
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (msg.mediaUrl != null && msg.mediaType == 'image')
-                              ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(msg.mediaUrl!, width: 220, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('โหลดรูปไม่สำเร็จ'))),
+                            if (msg.mediaBase64 != null && msg.mediaType == 'image')
+                              Image.memory(
+                                base64Decode(msg.mediaBase64!),
+                                width: MediaQuery.of(context).size.width * 0.7,
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Text('เปิดรูปไม่สำเร็จ'),
+                              )
+                            else if (msg.mediaUrl != null && msg.mediaType == 'image')
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  msg.mediaUrl!,
+                                  width: MediaQuery.of(context).size.width * 0.7,
+                                  fit: BoxFit.contain,
+                                  loadingBuilder: (context, child, progress) {
+                                    if (progress == null) return child;
+                                    return const Center(
+                                      child: CircularProgressIndicator(),
+                                    );
+                                  },
+                                  errorBuilder: (context, error, stackTrace) {
+                                    debugPrint('Chat image load failed: $error');
+                                    return const Text('โหลดรูปไม่สำเร็จ');
+                                  },
+                                ),
+                              ),
                             if (msg.mediaUrl != null && msg.mediaType == 'video')
-                              _ChatVideo(url: msg.mediaUrl!),
+                              PostVideoPlayer(
+                                videoUrl: msg.mediaUrl!,
+                                width: MediaQuery.of(context).size.width * 0.7,
+                              ),
                             if (msg.text.isNotEmpty)
                               Text(msg.text, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
                           ],
@@ -184,12 +280,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   IconButton(
                     tooltip: 'ส่งรูปภาพ',
                     icon: const Icon(Icons.image_outlined),
-                    onPressed: _sending ? null : () => _pickMedia(video: false),
+                    onPressed: _sending ? null : _pickImage,
                   ),
                   IconButton(
                     tooltip: 'ส่งวิดีโอ',
                     icon: const Icon(Icons.video_library_outlined),
-                    onPressed: _sending ? null : () => _pickMedia(video: true),
+                    onPressed: _sending ? null : _pickVideo,
                   ),
                   IconButton(
                     tooltip: 'Emoji',
@@ -225,39 +321,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ChatVideo extends StatefulWidget {
-  const _ChatVideo({required this.url});
-  final String url;
-
-  @override
-  State<_ChatVideo> createState() => _ChatVideoState();
-}
-
-class _ChatVideoState extends State<_ChatVideo> {
-  late final VideoPlayerController _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))..initialize().then((_) { if (mounted) setState(() {}); });
-
-  @override
-  void dispose() { _controller.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_controller.value.isInitialized) return const SizedBox(width: 220, height: 140, child: Center(child: CircularProgressIndicator()));
-    return SizedBox(
-      width: 220,
-      child: AspectRatio(
-        aspectRatio: _controller.value.aspectRatio,
-        child: Stack(alignment: Alignment.center, children: [
-          VideoPlayer(_controller),
-          IconButton.filledTonal(
-            onPressed: () => setState(() => _controller.value.isPlaying ? _controller.pause() : _controller.play()),
-            icon: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
-          ),
-        ]),
       ),
     );
   }

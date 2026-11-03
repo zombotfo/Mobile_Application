@@ -13,6 +13,7 @@ class Post {
     this.downvoteCount = 0,
     this.reactionCounts = const {},
     this.imageBase64,
+    this.imageUrl,
     this.videoUrl,
     this.communityId,
     this.communityName,
@@ -28,7 +29,8 @@ class Post {
   final int downvoteCount;
   final int commentCount;
   final Map<String, int> reactionCounts; // เช่น {'❤️': 3, '😂': 1}
-  final String? imageBase64; // รูปภาพ: เก็บเป็น Base64 ฝังในเอกสารนี้เลย
+  final String? imageBase64; // รูปของโพสต์เก่า ซึ่งยังต้องแสดงผลย้อนหลัง
+  final String? imageUrl;
   final String? communityId; // null = โพสต์ทั่วไป ไม่ได้อยู่ในชุมชนไหน
   final String? communityName;
   final String? videoUrl; // วิดีโอ: ไฟล์ใหญ่เกินจะฝัง จึงอัปโหลดขึ้น
@@ -56,6 +58,7 @@ class Post {
             const {},
       ),
       imageBase64: data['imageBase64'] as String?,
+      imageUrl: data['imageUrl'] as String?,
       videoUrl: data['videoUrl'] as String?,
       communityId: data['communityId'] as String?,
       communityName: data['communityName'] as String?,

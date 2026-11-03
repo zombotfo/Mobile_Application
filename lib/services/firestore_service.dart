@@ -3,11 +3,10 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
 
-import '../config/cloudinary_config.dart';
 import '../models/comment_model.dart';
 import '../models/post_model.dart';
+import 'cloudinary_service.dart';
 
 /// Firestore จำกัดขนาดเอกสารไม่เกิน ~1MB ต่อชิ้น กันไว้ไม่ให้เกิน
 /// (ตั้งไว้ที่ 700KB เผื่อระยะปลอดภัยสำหรับฟิลด์อื่นๆ ในเอกสารเดียวกัน)
@@ -24,6 +23,28 @@ class FirestoreService {
       _db.collection('users');
   CollectionReference<Map<String, dynamic>> get _posts =>
       _db.collection('posts');
+  CollectionReference<Map<String, dynamic>> get _feedback =>
+      _db.collection('feedback');
+
+  Future<void> submitFeedback(String message) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อนส่ง Feedback');
+
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) throw Exception('กรุณาพิมพ์ข้อความก่อนส่ง');
+    if (trimmed.length > 5000) throw Exception('ข้อความยาวเกิน 5,000 ตัวอักษร');
+
+    final profile = await _users.doc(user.uid).get();
+    final username =
+        profile.data()?['username'] as String? ?? user.displayName ?? 'unknown';
+
+    await _feedback.add({
+      'uid': user.uid,
+      'username': username,
+      'message': trimmed,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
 
   /// เรียกตอนสมัครสมาชิกสำเร็จ เพื่อสร้างเอกสารโปรไฟล์ผู้ใช้ใน Firestore
   /// (แยกจาก Firebase Auth ซึ่งเก็บแค่ email/password/displayName)
@@ -70,8 +91,7 @@ class FirestoreService {
     return snap.docs.map(Post.fromDoc).toList();
   }
 
-  /// [imageBytes] ไม่บังคับ — ถ้าแนบมาจะเข้ารหัสเป็น Base64 แล้วฝังไว้ใน
-  /// เอกสารโพสต์เลย (ไม่ต้องพึ่งบริการเก็บไฟล์แยกต่างหาก)
+  /// [imageBytes] ไม่บังคับ — ถ้าแนบมาจะอัปโหลดไป Cloudinary แล้วเก็บ URL ในโพสต์
   /// [videoBytes] ไม่บังคับเช่นกัน — ถ้าแนบมาจะอัปโหลดขึ้น Cloudinary ก่อน
   /// แล้วเก็บแค่ลิงก์ไว้ (ไฟล์วิดีโอใหญ่เกินจะฝังในเอกสารได้)
   /// ใส่ได้แค่อย่างใดอย่างหนึ่ง ไม่ใช่ทั้งรูปและวิดีโอพร้อมกัน
@@ -86,11 +106,6 @@ class FirestoreService {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
 
-    if (imageBytes != null && imageBytes.length > _maxImageBytes) {
-      throw Exception(
-        'รูปใหญ่เกินไป (จำกัดประมาณ 700KB) ลองเลือกรูปอื่นที่ไฟล์เล็กกว่านี้',
-      );
-    }
     if (videoBytes != null && videoBytes.length > _maxVideoBytes) {
       throw Exception('วิดีโอใหญ่เกินไป (จำกัดประมาณ 50MB) ลองใช้คลิปสั้นลง');
     }
@@ -101,9 +116,20 @@ class FirestoreService {
     final username =
         profile.data()?['username'] as String? ?? user.displayName ?? 'unknown';
 
+    String? imageUrl;
+    if (imageBytes != null) {
+      imageUrl = await CloudinaryService().uploadImage(
+        imageBytes,
+        filename: 'post.jpg',
+      );
+    }
+
     String? videoUrl;
     if (videoBytes != null) {
-      videoUrl = await _uploadVideoToCloudinary(videoBytes);
+      videoUrl = await CloudinaryService().uploadVideo(
+        videoBytes,
+        filename: 'post.mp4',
+      );
     }
 
     await _posts.add({
@@ -111,7 +137,7 @@ class FirestoreService {
       'authorUsername': username,
       'title': title.trim(),
       'body': body.trim(),
-      'imageBase64': imageBytes != null ? base64Encode(imageBytes) : null,
+      'imageUrl': imageUrl,
       'videoUrl': videoUrl,
       // null = โพสต์ทั่วไป / มีค่า = โพสต์ในชุมชนนั้น (เห็นในหน้า home
       // เฉพาะคนที่เป็นสมาชิกชุมชน ดู CommunityService.filterVisible)
@@ -123,29 +149,6 @@ class FirestoreService {
       'commentCount': 0,
       'reactionCounts': <String, int>{},
     });
-  }
-
-  /// อัปโหลดวิดีโอขึ้น Cloudinary แบบ unsigned upload (คนละ endpoint กับรูป
-  /// ต้องใช้ /video/upload ไม่ใช่ /image/upload) แล้วคืน URL มาเก็บในโพสต์
-  Future<String> _uploadVideoToCloudinary(Uint8List bytes) async {
-    final uri = Uri.parse(
-      'https://api.cloudinary.com/v1_1/${CloudinaryConfig.cloudName}/video/upload',
-    );
-    final request = http.MultipartRequest('POST', uri)
-      ..fields['upload_preset'] = CloudinaryConfig.uploadPreset
-      ..files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: 'post.mp4'),
-      );
-
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
-
-    if (response.statusCode != 200) {
-      throw Exception('อัปโหลดวิดีโอไม่สำเร็จ (${response.statusCode})');
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return data['secure_url'] as String;
   }
 
   /// ตั้งค่าโหวตของผู้ใช้คนปัจจุบัน: [value] เป็น 1 (ถูกใจ) หรือ -1 (ไม่ถูกใจ)
@@ -334,7 +337,7 @@ class FirestoreService {
   /// UPDATE: แก้ไขโพสต์ (หัวข้อ/เนื้อหา/สื่อแนบ) — เฉพาะเจ้าของโพสต์เท่านั้น
   /// ที่แก้ได้จริง (บังคับโดย Firestore Security Rules ฝั่งเซิร์ฟเวอร์)
   /// รูปและวิดีโอ: ไม่ใส่ = ไม่เปลี่ยน, removeImage/removeVideo = true = เอาออก
-  Future<void> updatePost({
+  Future<String?> updatePost({
     required String postId,
     required String title,
     required String body,
@@ -343,11 +346,6 @@ class FirestoreService {
     Uint8List? videoBytes,
     bool removeVideo = false,
   }) async {
-    if (imageBytes != null && imageBytes.length > _maxImageBytes) {
-      throw Exception(
-        'รูปใหญ่เกินไป (จำกัดประมาณ 700KB) ลองเลือกรูปอื่นที่ไฟล์เล็กกว่านี้',
-      );
-    }
     if (videoBytes != null && videoBytes.length > _maxVideoBytes) {
       throw Exception('วิดีโอใหญ่เกินไป (จำกัดประมาณ 50MB) ลองใช้คลิปสั้นลง');
     }
@@ -356,19 +354,30 @@ class FirestoreService {
       'title': title.trim(),
       'body': body.trim(),
     };
+    String? uploadedImageUrl;
     if (imageBytes != null) {
-      updates['imageBase64'] = base64Encode(imageBytes);
+      uploadedImageUrl = await CloudinaryService().uploadImage(
+        imageBytes,
+        filename: 'post.jpg',
+      );
+      updates['imageUrl'] = uploadedImageUrl;
+      updates['imageBase64'] = null;
     } else if (removeImage) {
+      updates['imageUrl'] = null;
       updates['imageBase64'] = null;
     }
 
     if (videoBytes != null) {
-      updates['videoUrl'] = await _uploadVideoToCloudinary(videoBytes);
+      updates['videoUrl'] = await CloudinaryService().uploadVideo(
+        videoBytes,
+        filename: 'post.mp4',
+      );
     } else if (removeVideo) {
       updates['videoUrl'] = null;
     }
 
     await _posts.doc(postId).update(updates);
+    return uploadedImageUrl;
   }
 
   /// DELETE: ลบโพสต์เดียว (เฉพาะเจ้าของ) — ลบ subcollection votes, comments

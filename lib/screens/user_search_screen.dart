@@ -53,6 +53,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
           MaterialPageRoute(
             builder: (_) => ChatDetailScreen(
               chatId: chatId,
+              otherUserId: otherUser.uid,
               otherUsername: otherUser.username,
             ),
           ),

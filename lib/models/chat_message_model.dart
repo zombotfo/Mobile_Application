@@ -7,6 +7,7 @@ class ChatMessage {
     required this.text,
     required this.sentAt,
     this.mediaUrl,
+    this.mediaBase64,
     this.mediaType,
   });
 
@@ -15,6 +16,7 @@ class ChatMessage {
   final String text;
   final DateTime sentAt;
   final String? mediaUrl;
+  final String? mediaBase64;
   final String? mediaType;
 
   factory ChatMessage.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -25,6 +27,7 @@ class ChatMessage {
       text: data['text'] as String? ?? '',
       sentAt: (data['sentAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       mediaUrl: data['mediaUrl'] as String?,
+      mediaBase64: data['mediaBase64'] as String?,
       mediaType: data['mediaType'] as String?,
     );
   }

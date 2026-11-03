@@ -1,20 +1,31 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/chat_message_model.dart';
 import '../models/chat_model.dart';
+import 'cloudinary_service.dart';
 
 /// ระบบแชท 1:1 คุยกับใครก็ได้ ไม่ต้องเป็นเพื่อนกันก่อน
 class ChatService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  static const int _maxChatImageBytes = 650 * 1024;
+  static const int _maxChatVideoBytes = 50 * 1024 * 1024;
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _db.collection('users');
   CollectionReference<Map<String, dynamic>> get _chats =>
       _db.collection('chats');
+
+  Stream<Map<String, dynamic>?> userProfileStream(String uid) =>
+      _users.doc(uid).snapshots().map((doc) => doc.data());
+
+  Future<Map<String, dynamic>?> fetchUserProfile(String uid) async {
+    final doc = await _users.doc(uid).get();
+    return doc.data();
+  }
 
   /// สร้าง id ห้องแชทแบบ deterministic จาก uid ทั้งสองฝั่ง (เรียงตัวอักษร)
   /// เพื่อให้เจอห้องเดิมเสมอไม่ว่าใครจะเป็นคนเริ่มทักก่อน
@@ -34,6 +45,20 @@ class ChatService {
         .get();
 
     return snap.docs.map((d) => ChatSummary.fromDoc(d, user.uid)).toList();
+  }
+
+  /// Streams chat summaries so previews update as soon as a message is sent.
+  Stream<List<ChatSummary>> chatsStream() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return Stream.value(const <ChatSummary>[]);
+
+    return _chats
+        .where('participants', arrayContains: user.uid)
+        .orderBy('lastMessageAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((doc) => ChatSummary.fromDoc(doc, user.uid))
+            .toList());
   }
 
   /// สร้างห้องแชทถ้ายังไม่มี (merge กันทับของเดิม) แล้วคืน chatId ไปเปิดต่อ
@@ -115,30 +140,63 @@ class ChatService {
     await batch.commit();
   }
 
-  Future<void> sendMedia({
+  Future<void> sendImage({
     required String chatId,
     required XFile file,
-    required String mediaType,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
-    final extension = file.name.contains('.') ? file.name.split('.').last : 'bin';
-    final ref = _storage.ref('chats/$chatId/${DateTime.now().millisecondsSinceEpoch}_${user.uid}.$extension');
     final bytes = await file.readAsBytes();
-    await ref.putData(bytes, SettableMetadata(contentType: file.mimeType));
-    final url = await ref.getDownloadURL();
-    final label = mediaType == 'image' ? 'ส่งรูปภาพ' : 'ส่งวิดีโอ';
+    if (bytes.length > _maxChatImageBytes) {
+      throw Exception('รูปใหญ่เกินไป กรุณาเลือกภาพที่เล็กกว่า 650 KB');
+    }
+
+    final chatRef = _chats.doc(chatId);
+    final batch = _db.batch();
+    batch.set(chatRef.collection('messages').doc(), {
+      'senderId': user.uid,
+      'text': '',
+      'mediaBase64': base64Encode(bytes),
+      'mediaContentType': file.mimeType ?? 'image/jpeg',
+      'mediaType': 'image',
+      'sentAt': FieldValue.serverTimestamp(),
+    });
+    batch.update(chatRef, {
+      'lastMessage': 'ส่งรูปภาพ',
+      'lastMessageAt': FieldValue.serverTimestamp(),
+      'lastSenderId': user.uid,
+    });
+    await batch.commit();
+  }
+
+  Future<void> sendVideo({
+    required String chatId,
+    required XFile file,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
+    final bytes = await file.readAsBytes();
+    if (bytes.length > _maxChatVideoBytes) {
+      throw Exception('วิดีโอใหญ่เกินไป กรุณาเลือกคลิปที่เล็กกว่า 50 MB');
+    }
+
+    final extension = file.name.contains('.') ? file.name.split('.').last : 'mp4';
+    final url = await CloudinaryService().uploadVideo(
+      bytes,
+      filename: 'chat_${user.uid}.$extension',
+    );
+
     final chatRef = _chats.doc(chatId);
     final batch = _db.batch();
     batch.set(chatRef.collection('messages').doc(), {
       'senderId': user.uid,
       'text': '',
       'mediaUrl': url,
-      'mediaType': mediaType,
+      'mediaType': 'video',
       'sentAt': FieldValue.serverTimestamp(),
     });
     batch.update(chatRef, {
-      'lastMessage': label,
+      'lastMessage': 'ส่งวิดีโอ',
       'lastMessageAt': FieldValue.serverTimestamp(),
       'lastSenderId': user.uid,
     });

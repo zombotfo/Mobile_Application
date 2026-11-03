@@ -1,0 +1,273 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ข้อมูลชุมชนจาก id (ใช้ตรวจสิทธิ์ในกฎของสมาชิก/โพสต์ชุมชน)
+    function communityData(cid) {
+      return get(/databases/$(database)/documents/communities/$(cid)).data;
+    }
+
+    // เราเป็นสมาชิก (active) ของชุมชน cid หรือไม่ — ถ้าไม่มีเอกสารสมาชิก
+    // get() จะ error ทำให้ผลเป็น false (ปฏิเสธ) ซึ่งตรงกับที่ต้องการพอดี
+    function isActiveMember(cid) {
+      return get(/databases/$(database)/documents/communityMembers/$(cid + '~' + request.auth.uid)).data.status == 'active';
+    }
+
+    // The owner of a community can moderate and remove the content stored in it.
+    function isCommunityOwnerOfPost(postId) {
+      let post = get(/databases/$(database)/documents/posts/$(postId)).data;
+      return post.get('communityId', null) != null
+             && communityData(post.communityId).ownerId == request.auth.uid;
+    }
+
+    // โปรไฟล์ผู้ใช้: ทุกคนที่ล็อกอินอ่านได้ (ไว้โชว์ username ในโพสต์)
+    // แต่แก้ไขได้เฉพาะเจ้าของบัญชีเท่านั้น
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      // อีกฝ่ายอัปเดต friendCount ของเราได้ด้วย ตอนยอมรับ/เลิกเป็นเพื่อนกัน
+      // (friend_service.dart เพิ่ม/ลดเลขนี้ของทั้งสองฝ่ายพร้อมกันเป็น batch
+      // เดียว) จำกัดให้แก้ได้แค่ field นี้ field เดียวเท่านั้น
+      allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['friendCount']);
+      // อนุญาตให้ลบเฉพาะบัญชีของตัวเอง (ใช้ตอนกด "ลบบัญชี")
+      allow delete: if request.auth != null && request.auth.uid == userId;
+
+      // ติดตาม (follow): เขียนได้เฉพาะเจ้าของบัญชี แต่อ่านได้ทุกคนที่
+      // ล็อกอิน เพราะต้องใช้ collectionGroup query นับจำนวนผู้ติดตาม
+      // ของคนอื่นได้ (ระบบติดตามเป็นทางเดียว กดได้ทันทีไม่ต้องรอยืนยัน)
+      match /following/{targetUid} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null
+                     && request.auth.uid == userId;
+      }
+    }
+
+    // rule ข้างบนใช้กับการอ่านแบบปกติ (อ่าน following ของ user คนเดียว)
+    // แต่ collectionGroup('following') ที่ใช้นับ follower ของคนอื่น
+    // เป็นคนละกลไกกัน ต้องประกาศ rule แยกด้วย pattern {path=**} แบบนี้
+    // ไม่งั้น Firestore จะปฏิเสธด้วย permission-denied แม้ rule ข้างบน
+    // จะอนุญาตไว้แล้วก็ตาม
+    match /{path=**}/following/{targetUid} {
+      allow read: if request.auth != null;
+    }
+
+    // Feedback จากผู้ใช้: ส่งได้เฉพาะข้อความของบัญชีที่ล็อกอิน
+    // ผู้ใช้แอปอ่านหรือแก้ไข feedback ไม่ได้ ให้ dev เปิดอ่านจาก Firebase Console
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasAll([
+                      'uid', 'username', 'message', 'createdAt'
+                    ])
+                    && request.resource.data.keys().hasOnly([
+                      'uid', 'username', 'message', 'createdAt'
+                    ])
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.username is string
+                    && request.resource.data.message is string
+                    && request.resource.data.message.size() > 0
+                    && request.resource.data.message.size() <= 5000
+                    && request.resource.data.createdAt == request.time;
+      allow read, update, delete: if false;
+    }
+
+    // ความสัมพันธ์เพื่อน: เก็บเป็นเอกสารเดียวต่อคู่ (ไม่แยกคนละ
+    // subcollection) เพื่อให้ทั้งสองฝ่ายอ่าน/แก้ไขได้โดยไม่ต้องมีสิทธิ์
+    // เขียนข้าม user doc ของกันและกัน — ระบบเป็นแบบส่งคำขอแล้วรอยอมรับ
+    match /friendships/{friendshipId} {
+      // อ่านเอกสารเดี่ยว (get): เช็คจาก id ของเอกสาร (รูปแบบ uidA_uidB) แทน
+      // resource.data เพราะตอนยังไม่เคยส่งคำขอ เอกสารยังไม่มีอยู่ resource จะ
+      // เป็น null ทำให้ rule เดิมตอบ permission-denied ทั้งที่ควรอ่านได้
+      // (หน้าโปรไฟล์คนอื่นเช็คสถานะเพื่อนด้วยการอ่านเอกสารนี้เสมอ)
+      allow get: if request.auth != null
+                 && request.auth.uid in friendshipId.split('_');
+      // อ่านแบบ query (list): ยังใช้ participants เหมือนเดิม
+      allow list: if request.auth != null
+                  && request.auth.uid in resource.data.participants;
+      // ส่งคำขอ: ต้องเป็นคนส่งเอง (requestedBy ตรงกับตัวเอง) และสถานะ
+      // ต้องเริ่มที่ pending เท่านั้น (ห้ามสร้างมาเป็น accepted เลย)
+      allow create: if request.auth != null
+                    && request.auth.uid in request.resource.data.participants
+                    && request.auth.uid == request.resource.data.requestedBy
+                    && request.resource.data.status == 'pending';
+      // ยอมรับคำขอ: ต้องเป็น "อีกฝ่าย" ที่ไม่ใช่คนส่งคำขอ และเปลี่ยนเป็น
+      // accepted เท่านั้น (กันคนส่งคำขอกดยอมรับคำขอตัวเอง)
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.participants
+                    && request.auth.uid != resource.data.requestedBy
+                    && request.resource.data.status == 'accepted';
+      // ปฏิเสธคำขอ/ยกเลิกคำขอ/เลิกเป็นเพื่อน: ใครในคู่นี้ก็ลบได้
+      allow delete: if request.auth != null
+                    && request.auth.uid in resource.data.participants;
+    }
+
+    // ห้องแชท: อ่าน/เขียนได้เฉพาะคนที่อยู่ใน participants ของห้องนั้น
+    match /chats/{chatId} {
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.participants;
+      allow create: if request.auth != null
+                    && request.auth.uid in request.resource.data.participants;
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.participants;
+      allow delete: if false;
+
+      // ข้อความ: อ่านได้เฉพาะคนในห้องแชท ส่งได้เฉพาะในนามตัวเอง (กัน
+      // ปลอมเป็นคนอื่นส่งข้อความ) แก้ไข/ลบข้อความที่ส่งไปแล้วไม่ได้
+      match /messages/{messageId} {
+        allow read: if request.auth != null
+                    && request.auth.uid in get(
+                        /databases/$(database)/documents/chats/$(chatId)
+                      ).data.participants;
+        allow create: if request.auth != null
+                      && request.auth.uid == request.resource.data.senderId
+                      && request.auth.uid in get(
+                          /databases/$(database)/documents/chats/$(chatId)
+                        ).data.participants;
+        allow update, delete: if false;
+      }
+    }
+
+    // โพสต์: ทุกคนที่ล็อกอินอ่าน/สร้างได้
+    // ===== ชุมชน (เหมือน subreddit) =====
+    // id เอกสาร = ชื่อชุมชนตัวพิมพ์เล็ก จึงซ้ำกันไม่ได้
+    match /communities/{communityId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerId == request.auth.uid
+                    && communityId == request.resource.data.nameLower
+                    && request.resource.data.memberCount == 1
+                    && request.resource.data.joinType in ['open', 'approval'];
+      // เจ้าของแก้ไขได้ทุกฟิลด์
+      allow update: if request.auth != null
+                    && resource.data.ownerId == request.auth.uid;
+      // คนอื่นแก้ได้แค่ memberCount (ตอนเข้าร่วม/ออกจากชุมชน)
+      allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['memberCount']);
+      allow delete: if request.auth != null
+                    && resource.data.ownerId == request.auth.uid;
+    }
+
+    // สมาชิก/คำขอเข้าร่วม: 1 คนต่อ 1 ชุมชน = 1 เอกสาร (id = ชุมชน~uid)
+    match /communityMembers/{memberId} {
+      // เช็คสถานะของตัวเองรายคน (ไม่มีเอกสารก็อ่านได้ ต้องไม่ error)
+      allow get: if request.auth != null;
+      // query: อ่านได้เฉพาะของตัวเอง หรือของชุมชนที่เราเป็นเจ้าของ (ดูคำขอ)
+      allow list: if request.auth != null
+                  && (resource.data.uid == request.auth.uid
+                      || resource.data.ownerId == request.auth.uid);
+
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid
+                    && memberId == request.resource.data.communityId + '~' + request.auth.uid
+                    && request.resource.data.ownerId == communityData(request.resource.data.communityId).ownerId
+                    && (
+                      // เจ้าของชุมชนเป็นสมาชิกคนแรกของชุมชนตัวเอง
+                      (request.resource.data.role == 'owner'
+                        && request.resource.data.status == 'active'
+                        && communityData(request.resource.data.communityId).ownerId == request.auth.uid)
+                      ||
+                      // สมาชิกทั่วไป: แบบเปิดเข้าได้ทันที / แบบต้องอนุมัติได้แค่ pending
+                      (request.resource.data.role == 'member'
+                        && ((communityData(request.resource.data.communityId).joinType == 'open'
+                              && request.resource.data.status == 'active')
+                            || (communityData(request.resource.data.communityId).joinType == 'approval'
+                              && request.resource.data.status == 'pending')))
+                    );
+
+      // อนุมัติคำขอ: เฉพาะเจ้าของชุมชน เปลี่ยน pending -> active และแก้ได้แค่ status
+      allow update: if request.auth != null
+                    && resource.data.ownerId == request.auth.uid
+                    && resource.data.status == 'pending'
+                    && request.resource.data.status == 'active'
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['status']);
+
+      // ออกจากชุมชน/ยกเลิกคำขอ (เจ้าของชุมชนออกเองไม่ได้) หรือเจ้าของปฏิเสธคำขอ
+      allow delete: if request.auth != null
+                    && ((resource.data.uid == request.auth.uid
+                          && resource.data.role != 'owner')
+                        || resource.data.ownerId == request.auth.uid);
+    }
+
+    match /posts/{postId} {
+      allow read: if request.auth != null;
+      // โพสต์ทั่วไป (communityId เป็น null) ใครก็โพสต์ได้ แต่ถ้าโพสต์ลงชุมชน
+      // ต้องเป็นสมาชิกของชุมชนนั้นอยู่จริง (ตรวจฝั่งเซิร์ฟเวอร์ ไม่ใช่แค่ใน UI)
+      allow create: if request.auth != null
+                    && request.resource.data.authorId == request.auth.uid
+                    && (request.resource.data.get('communityId', null) == null
+                        || isActiveMember(request.resource.data.communityId));
+
+      // เจ้าของโพสต์แก้ไขฟิลด์ไหนก็ได้ (แก้ title/body ภายหลัง)
+      allow update: if request.auth != null
+                    && resource.data.authorId == request.auth.uid;
+
+      // คนอื่นที่ล็อกอินอยู่ อัปเดตได้เฉพาะฟิลด์โหวต/คอมเมนต์/reaction
+      // เท่านั้น (ไว้ใช้ตอนกดโหวต คอมเมนต์ หรือ react โพสต์ของคนอื่น
+      // ไม่ให้ไปแก้ title/body/authorId ได้)
+      allow update: if request.auth != null
+                    && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly([
+                          'upvoteCount', 'downvoteCount',
+                          'commentCount', 'reactionCounts',
+                        ]);
+
+      allow delete: if request.auth != null
+                    && (resource.data.authorId == request.auth.uid
+                        || isCommunityOwnerOfPost(postId));
+
+      // โหวต: แต่ละคนมีได้ 1 เอกสารต่อโพสต์ (doc id = uid ของตัวเอง)
+      match /votes/{voterId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null && request.auth.uid == voterId;
+        // เจ้าของโพสต์ลบโหวตของคนอื่นได้ด้วย ตอนลบทั้งโพสต์ (cascading delete
+        // ใน deletePost ของแอป) ไม่งั้นจะลบโหวตของคนอื่นไม่ได้ ทำให้ batch ล้มเหลว
+        allow delete: if request.auth != null
+                      && (get(/databases/$(database)/documents/posts/$(postId))
+                              .data.authorId == request.auth.uid
+                          || isCommunityOwnerOfPost(postId));
+      }
+
+      // อิโมจิ react: แต่ละคนมีได้ 1 เอกสารต่อโพสต์ (doc id = uid ของตัวเอง)
+      // เหมือน votes — เจ้าของโพสต์ลบของคนอื่นได้ด้วยตอน cascading delete
+      match /reactions/{reactorId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null
+                     && request.auth.uid == reactorId;
+        allow delete: if request.auth != null
+                      && (get(/databases/$(database)/documents/posts/$(postId))
+                              .data.authorId == request.auth.uid
+                          || isCommunityOwnerOfPost(postId));
+      }
+
+      // รายงานโพสต์: มีเพียงเจ้าของชุมชนที่อ่าน/ลบรายงานของโพสต์ในชุมชน
+      // ได้ เพื่อให้ลบชุมชนพร้อมข้อมูลย่อยได้ โดยไม่เปิดให้ผู้ใช้ทั่วไปอ่าน
+      match /reports/{reporterId} {
+        allow read: if request.auth != null
+                    && isCommunityOwnerOfPost(postId);
+        allow create, update: if request.auth != null
+                              && request.auth.uid == reporterId;
+        allow delete: if request.auth != null
+                      && isCommunityOwnerOfPost(postId);
+      }
+
+      // ความคิดเห็น: ทุกคนที่ล็อกอินอ่านได้ เขียนได้แค่ในนามตัวเอง
+      // ลบได้ทั้งเจ้าของคอมเมนต์เอง หรือเจ้าของโพสต์ (ลบคอมเมนต์คนอื่น
+      // ใต้โพสต์ตัวเองได้ + รองรับ cascading delete ตอนลบทั้งโพสต์)
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+                      && request.resource.data.authorId == request.auth.uid;
+        allow delete: if request.auth != null
+                      && (resource.data.authorId == request.auth.uid
+                          || get(/databases/$(database)/documents/posts/$(postId))
+                              .data.authorId == request.auth.uid
+                          || isCommunityOwnerOfPost(postId));
+        allow update: if false;
+      }
+    }
+  }
+}

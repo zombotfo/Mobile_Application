@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -6,12 +7,13 @@ import '../models/chat_model.dart';
 import '../services/chat_service.dart';
 import '../utils/time_ago.dart';
 import 'chat_detail_screen.dart';
-import 'user_search_screen.dart';
 
 /// รายการห้องแชททั้งหมดของผู้ใช้คนปัจจุบัน กดปุ่ม + เพื่อค้นหาและเริ่มคุย
 /// กับใครก็ได้ (ไม่ต้องเป็นเพื่อนกันก่อน)
 class ChatListScreen extends StatefulWidget {
-  const ChatListScreen({super.key});
+  const ChatListScreen({super.key, this.searchQuery = ''});
+
+  final String searchQuery;
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -19,25 +21,89 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _chatService = ChatService();
-  Timer? _pollTimer;
+  StreamSubscription<List<ChatSummary>>? _chatsSubscription;
   List<ChatSummary>? _chats;
+  Set<String>? _matchingChatIds;
   bool _loading = true;
+  bool _searchFiltering = false;
+  int _searchRequest = 0;
 
   @override
   void initState() {
     super.initState();
-    _refresh();
-    // ดึงรายการแชทใหม่ทุก 1 นาที เผื่อมีคนทักมาโดยที่เราไม่ได้เปิดแอปอยู่
-    _pollTimer = Timer.periodic(const Duration(minutes: 1), (_) => _refresh());
+    _listenToChats();
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _searchRequest++;
+    _chatsSubscription?.cancel();
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant ChatListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchQuery != widget.searchQuery) _filterChats();
+  }
+
   bool _hasError = false;
+
+  void _listenToChats() {
+    _chatsSubscription = _chatService.chatsStream().listen(
+      (chats) {
+        if (!mounted) return;
+        setState(() {
+          _chats = chats;
+          _hasError = false;
+          _loading = false;
+        });
+        _filterChats();
+      },
+      onError: (Object error) {
+        debugPrint('ChatListScreen: chat stream failed: $error');
+        if (!mounted) return;
+        setState(() {
+          _hasError = true;
+          _loading = false;
+        });
+      },
+    );
+  }
+
+  Future<void> _filterChats() async {
+    final request = ++_searchRequest;
+    final query = widget.searchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _matchingChatIds = null;
+          _searchFiltering = false;
+        });
+      }
+      return;
+    }
+
+    final chats = _chats;
+    if (chats == null) return;
+    setState(() => _searchFiltering = true);
+
+    final matchingIds = <String>{};
+    await Future.wait(chats.map((chat) async {
+      final profile = await _chatService.fetchUserProfile(chat.otherUserId);
+      final username = profile?['username'] as String? ?? chat.otherUsername;
+      if (username.toLowerCase().contains(query) ||
+          chat.lastMessage.toLowerCase().contains(query)) {
+        matchingIds.add(chat.id);
+      }
+    }));
+
+    if (!mounted || request != _searchRequest) return;
+    setState(() {
+      _matchingChatIds = matchingIds;
+      _searchFiltering = false;
+    });
+  }
 
   Future<void> _refresh() async {
     try {
@@ -48,6 +114,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         _hasError = false;
         _loading = false;
       });
+      _filterChats();
     } catch (_) {
       // เช่น ยังไม่ได้สร้าง Firestore composite index ให้ query นี้
       // กันไว้ไม่ให้ค้างเงียบๆ โดยไม่ขึ้นอะไรให้ผู้ใช้เห็นเลย
@@ -59,23 +126,59 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  Future<void> _openUserSearch() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const UserSearchScreen()),
-    );
-    _refresh(); // กลับมาจากหน้าค้นหา อาจมีห้องแชทใหม่ที่เพิ่งเริ่มคุย
-  }
-
   Future<void> _openChat(ChatSummary chat) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatDetailScreen(
           chatId: chat.id,
+          otherUserId: chat.otherUserId,
           otherUsername: chat.otherUsername,
         ),
       ),
     );
     _refresh(); // กลับมาแล้วอัปเดต last message ล่าสุดในลิสต์
+  }
+
+  Widget _chatTile(ChatSummary chat) {
+    final initial = chat.otherUsername.isNotEmpty
+        ? chat.otherUsername[0].toUpperCase()
+        : '?';
+
+    return StreamBuilder<Map<String, dynamic>?>(
+      stream: _chatService.userProfileStream(chat.otherUserId),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        final username = profile?['username'] as String? ?? chat.otherUsername;
+        final encodedPhoto = profile?['photoBase64'] as String?;
+        ImageProvider<Object>? photo;
+        if (encodedPhoto != null && encodedPhoto.isNotEmpty) {
+          try {
+            photo = MemoryImage(base64Decode(encodedPhoto));
+          } on FormatException {
+            // Keep showing the initials when a stored photo is invalid.
+          }
+        }
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundImage: photo,
+            child: photo == null
+                ? Text(username.isNotEmpty ? username[0].toUpperCase() : initial)
+                : null,
+          ),
+          title: Text('u/$username'),
+          subtitle: Text(
+            chat.lastMessage.isEmpty ? 'เริ่มการสนทนา' : chat.lastMessage,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Text(
+            timeAgo(chat.lastMessageAt),
+            style: const TextStyle(fontSize: 11, color: Colors.black45),
+          ),
+          onTap: () => _openChat(chat),
+        );
+      },
+    );
   }
 
   @override
@@ -103,7 +206,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 )
               : RefreshIndicator(
               onRefresh: _refresh,
-              child: (_chats == null || _chats!.isEmpty)
+              child: _searchFiltering
+                  ? const Center(child: CircularProgressIndicator())
+                  : (_chats == null || _chats!.isEmpty)
                   ? ListView(
                       children: const [
                         Padding(
@@ -116,43 +221,31 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ),
                       ],
                     )
-                  : ListView.builder(
-                      itemCount: _chats!.length,
+                  : widget.searchQuery.trim().isNotEmpty &&
+                          (_matchingChatIds?.isEmpty ?? false)
+                      ? ListView(
+                          children: const [
+                            Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Center(child: Text('ไม่พบแชทที่ค้นหา')),
+                            ),
+                          ],
+                        )
+                      : ListView.builder(
+                      itemCount: _chats!
+                          .where((chat) => _matchingChatIds == null ||
+                              _matchingChatIds!.contains(chat.id))
+                          .length,
                       itemBuilder: (context, index) {
-                        final chat = _chats![index];
-                        return ListTile(
-                          leading: CircleAvatar(
-                            child: Text(
-                              chat.otherUsername.isNotEmpty
-                                  ? chat.otherUsername[0].toUpperCase()
-                                  : '?',
-                            ),
-                          ),
-                          title: Text('u/${chat.otherUsername}'),
-                          subtitle: Text(
-                            chat.lastMessage.isEmpty
-                                ? 'เริ่มการสนทนา'
-                                : chat.lastMessage,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: Text(
-                            timeAgo(chat.lastMessageAt),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.black45,
-                            ),
-                          ),
-                          onTap: () => _openChat(chat),
-                        );
+                        final visibleChats = _chats!
+                            .where((chat) => _matchingChatIds == null ||
+                                _matchingChatIds!.contains(chat.id))
+                            .toList();
+                        final chat = visibleChats[index];
+                        return _chatTile(chat);
                       },
                     ),
             ),
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'เริ่มแชทใหม่',
-        onPressed: _openUserSearch,
-        child: const Icon(Icons.add_comment_outlined),
-      ),
     );
   }
 }

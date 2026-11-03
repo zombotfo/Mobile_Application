@@ -18,7 +18,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _usernameController = TextEditingController();
   final _firestoreService = FirestoreService();
 
-  static final _usernameRegex = RegExp(r'^[A-Za-z0-9_]+$');
+  static final _usernameRegex = RegExp(r'^[A-Za-z0-9_ก-๙]+$');
 
   bool _loadingProfile = true;
   String? _existingPhotoBase64;
@@ -135,7 +135,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         return 'ใช้ 3–20 ตัวอักษร';
                       }
                       if (!_usernameRegex.hasMatch(v)) {
-                        return 'ใช้ได้เฉพาะ a-z, 0-9 และ _';
+                        return 'ใช้ภาษาไทย a-z, 0-9 และ _ ได้';
                       }
                       return null;
                     },

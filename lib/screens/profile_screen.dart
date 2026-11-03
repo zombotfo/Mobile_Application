@@ -44,6 +44,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isPrivate = false;
   bool _isFriend = false;
   List<Post> _posts = [];
+  int _postCount = 0;
   int _totalUpvotes = 0;
   int _totalDownvotes = 0;
   int _followerCount = 0;
@@ -82,6 +83,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // ลดการอ่านข้อมูลที่ใช้งานไม่ได้อยู่ดี
       var posts =
           canView ? await _firestoreService.fetchPostsByAuthor(widget.uid) : <Post>[];
+      final postCount = posts.length;
 
       // โพสต์ในชุมชนที่เราไม่ได้เป็นสมาชิก ไม่โชว์ในโปรไฟล์คนอื่นด้วย
       // (โปรไฟล์ตัวเองเห็นครบ เพราะ filterVisible ยกเว้นโพสต์ของตัวเองให้)
@@ -102,6 +104,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _isPrivate = isPrivate;
         _isFriend = isFriend;
         _posts = posts;
+        _postCount = postCount;
         _totalUpvotes = posts.fold<int>(0, (sum, p) => sum + p.upvoteCount);
         _totalDownvotes = posts.fold<int>(0, (sum, p) => sum + p.downvoteCount);
         _followerCount = followerCount;
@@ -136,7 +139,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) =>
-                ChatDetailScreen(chatId: chatId, otherUsername: _username),
+                ChatDetailScreen(
+                  chatId: chatId,
+                  otherUserId: widget.uid,
+                  otherUsername: _username,
+                ),
           ),
         );
       }
@@ -175,7 +182,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text('u/$_username')),
+      appBar: AppBar(),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -263,7 +270,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                'u/$_username',
+                _username,
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
               if (_isPrivate && !_isMe) ...[
@@ -274,9 +281,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 16),
           if (_canViewContent)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 20,
+              runSpacing: 12,
               children: [
+                _StatItem(label: 'โพสต์', value: _postCount),
                 _StatItem(label: 'ถูกใจ', value: _totalUpvotes),
                 _StatItem(label: 'ไม่ถูกใจ', value: _totalDownvotes),
                 _StatItem(label: 'ผู้ติดตาม', value: _followerCount),

@@ -1,5 +1,4 @@
-/// ตั้งค่า Cloudinary สำหรับอัปโหลดวิดีโอโพสต์ (รูปภาพยังใช้ Base64 ฝังใน
-/// Firestore เหมือนเดิม เปลี่ยนมาใช้ Cloudinary เฉพาะวิดีโอ เพราะไฟล์ใหญ่
+/// ตั้งค่า Cloudinary สำหรับอัปโหลดรูปภาพและวิดีโอโพสต์
 /// เกินกว่าจะฝังในเอกสาร Firestore ได้)
 ///
 /// สมัครบัญชีฟรีที่ https://cloudinary.com แล้วแก้ 2 ค่าด้านล่างให้ตรงกับของคุณ:
@@ -8,6 +7,6 @@
 ///   ต้องตั้ง Signing Mode เป็น "Unsigned" ไม่งั้นอัปโหลดจากแอปไม่ได้
 /// (ถ้าเคยสมัครไว้ก่อนหน้านี้แล้ว ใช้ค่าเดิมได้เลย ไม่ต้องสมัครใหม่)
 class CloudinaryConfig {
-  static const String cloudName = 'YOUR_CLOUD_NAME';
-  static const String uploadPreset = 'YOUR_UPLOAD_PRESET';
+  static const String cloudName = 'tyw0ggs7';
+  static const String uploadPreset = 'sjcyfk1s';
 }

@@ -26,7 +26,7 @@ class FeedScreen extends StatefulWidget {
 class FeedScreenState extends State<FeedScreen> {
   final _firestoreService = FirestoreService();
   final _communityService = CommunityService();
-  Timer? _pollTimer;
+  StreamSubscription<List<Post>>? _postsSubscription;
 
   List<Post>? _posts;
   bool _loading = true;
@@ -35,14 +35,42 @@ class FeedScreenState extends State<FeedScreen> {
   @override
   void initState() {
     super.initState();
-    _refresh();
-    _pollTimer = Timer.periodic(const Duration(minutes: 1), (_) => _refresh());
+    _listenToPosts();
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _postsSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _listenToPosts() async {
+    Set<String> myCommunityIds = <String>{};
+    try {
+      myCommunityIds = await _communityService.fetchMyActiveCommunityIds();
+    } catch (e) {
+      debugPrint('FeedScreen: failed to load community membership: $e');
+    }
+    if (!mounted) return;
+    _postsSubscription = _firestoreService.postsStream().listen(
+      (allPosts) {
+        final posts = CommunityService.filterVisible(allPosts, myCommunityIds);
+        if (!mounted) return;
+        setState(() {
+          _posts = posts;
+          _hasError = false;
+          _loading = false;
+        });
+      },
+      onError: (Object error) {
+        debugPrint('FeedScreen: post stream failed: $error');
+        if (!mounted) return;
+        setState(() {
+          _hasError = true;
+          _loading = false;
+        });
+      },
+    );
   }
 
   Future<void> _refresh() async {

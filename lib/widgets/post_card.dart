@@ -150,6 +150,7 @@ class _PostCardState extends State<PostCard> {
           MaterialPageRoute(
             builder: (_) => ChatDetailScreen(
               chatId: chatId,
+              otherUserId: widget.post.authorId,
               otherUsername: widget.post.authorUsername,
             ),
           ),
@@ -409,6 +410,28 @@ class _PostCardState extends State<PostCard> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: PostVideoPlayer(videoUrl: post.videoUrl!),
+              ),
+            ] else if (post.imageUrl != null) ...[
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
+                  child: Image.network(
+                    post.imageUrl!,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      height: 140,
+                      color: const Color(0xFFF0F0F1),
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.broken_image_outlined,
+                        color: Colors.black26,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ] else if (post.imageBase64 != null) ...[
               const SizedBox(height: 10),

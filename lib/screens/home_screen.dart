@@ -4,13 +4,17 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../services/community_service.dart';
+import '../services/friend_service.dart';
 import '../services/firestore_service.dart';
+import '../widgets/notification_dot.dart';
 import 'account_settings_screen.dart';
 import 'chat_list_screen.dart';
 import 'communities_screen.dart';
 import 'create_post_screen.dart';
 import 'edit_profile_screen.dart';
 import 'feed_screen.dart';
+import 'feedback_screen.dart';
 import 'friend_requests_screen.dart';
 import 'friends_list_screen.dart';
 import 'profile_screen.dart';
@@ -29,8 +33,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   // 0 = หน้าหลัก, 1 = ชุมชน, 2 = แชท ("สร้างโพสต์" ไม่ใช่แท็บ แต่ push หน้าใหม่)
   int _tabIndex = 0;
-  String _searchQuery = '';
-  final _searchController = TextEditingController();
+  String _postSearchQuery = '';
+  String _communitySearchQuery = '';
+  String _chatSearchQuery = '';
+  final _postSearchController = TextEditingController();
+  final _communitySearchController = TextEditingController();
+  final _chatSearchController = TextEditingController();
 
   // ใช้ GlobalKey อ้างถึง state ของ FeedScreen จากข้างนอก เพื่อสั่งรีเฟรช
   // ทันทีได้ (เช่นตอนสร้างโพสต์สำเร็จ หรือกดปุ่มรีเฟรชเอง) โดยไม่ต้องรอ
@@ -47,7 +55,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _searchController.dispose();
+    _postSearchController.dispose();
+    _communitySearchController.dispose();
+    _chatSearchController.dispose();
     super.dispose();
   }
 
@@ -88,22 +98,41 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _TopBar(
-              initial: initial,
-              photoBase64: _myPhotoBase64,
-              controller: _searchController,
-              onChanged: (value) => setState(() => _searchQuery = value),
-              onEditProfile: _openEditProfile,
-              onRefresh: _tabIndex == 0
-                  ? () => _feedKey.currentState?.refreshNow()
-                  : null,
-            ),
-            const Divider(height: 1),
+            if (_tabIndex != 3) ...[
+              _TopBar(
+                initial: initial,
+                photoBase64: _myPhotoBase64,
+                controller: switch (_tabIndex) {
+                  1 => _communitySearchController,
+                  2 => _chatSearchController,
+                  _ => _postSearchController,
+                },
+                hintText: switch (_tabIndex) {
+                  1 => 'ค้นหาชุมชน...',
+                  2 => 'ค้นหาแชท...',
+                  _ => 'ค้นหาโพสต์...',
+                },
+                onChanged: (value) => setState(() {
+                  if (_tabIndex == 1) {
+                    _communitySearchQuery = value;
+                  } else if (_tabIndex == 2) {
+                    _chatSearchQuery = value;
+                  } else {
+                    _postSearchQuery = value;
+                  }
+                }),
+                onEditProfile: _openEditProfile,
+                onRefresh: _tabIndex == 0
+                    ? () => _feedKey.currentState?.refreshNow()
+                    : null,
+              ),
+              const Divider(height: 1),
+            ],
             Expanded(
               child: switch (_tabIndex) {
-                0 => FeedScreen(key: _feedKey, searchQuery: _searchQuery),
-                1 => const CommunitiesScreen(),
-                2 => const ChatListScreen(),
+                0 => FeedScreen(key: _feedKey, searchQuery: _postSearchQuery),
+                1 => CommunitiesScreen(searchQuery: _communitySearchQuery),
+                2 => ChatListScreen(searchQuery: _chatSearchQuery),
                 _ => ProfileScreen(uid: user.uid),
               },
             ),
@@ -122,11 +151,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _TopBar extends StatelessWidget {
+class _TopBar extends StatefulWidget {
   const _TopBar({
     required this.initial,
     required this.photoBase64,
     required this.controller,
+    required this.hintText,
     required this.onChanged,
     required this.onEditProfile,
     this.onRefresh,
@@ -135,10 +165,21 @@ class _TopBar extends StatelessWidget {
   final String initial;
   final String? photoBase64;
   final TextEditingController controller;
+  final String hintText;
   final ValueChanged<String> onChanged;
   final VoidCallback onEditProfile;
   // null เมื่ออยู่แท็บที่ไม่มีฟีดให้รีเฟรช (เช่นแท็บแชท)
   final VoidCallback? onRefresh;
+
+  @override
+  State<_TopBar> createState() => _TopBarState();
+}
+
+class _TopBarState extends State<_TopBar> {
+  late final Stream<int> _friendRequestCountStream =
+      FriendService().incomingRequestsCountStream();
+  late final Stream<int> _communityRequestCountStream =
+      CommunityService().pendingRequestsCountForOwnerStream();
 
   Future<void> _confirmDeleteAccount(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -184,9 +225,18 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    return StreamBuilder<int>(
+      stream: _friendRequestCountStream,
+      builder: (context, friendSnapshot) {
+        final friendRequestCount = friendSnapshot.data ?? 0;
+        return StreamBuilder<int>(
+          stream: _communityRequestCountStream,
+          builder: (context, communitySnapshot) {
+            final hasPendingRequests =
+                friendRequestCount > 0 || (communitySnapshot.data ?? 0) > 0;
+            final colors = Theme.of(context).colorScheme;
 
-    return Padding(
+            return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       child: Row(
         children: [
@@ -196,7 +246,7 @@ class _TopBar extends StatelessWidget {
             onSelected: (value) {
               switch (value) {
                 case 'edit':
-                  onEditProfile();
+                  widget.onEditProfile();
                   break;
                 case 'friends':
                   Navigator.of(context).push(
@@ -213,9 +263,24 @@ class _TopBar extends StatelessWidget {
                   break;
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(value: 'edit', child: Text('แก้ไขโปรไฟล์')),
-              PopupMenuItem(value: 'friends', child: Text('เพื่อนของฉัน')),
+              PopupMenuItem(
+                value: 'friends',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('เพื่อนของฉัน'),
+                    if (friendRequestCount > 0) ...[
+                      const SizedBox(width: 10),
+                      const NotificationDot(
+                        show: true,
+                        child: SizedBox(width: 8, height: 8),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
               PopupMenuItem(value: 'logout', child: Text('ออกจากระบบ')),
               PopupMenuItem(
                 value: 'delete',
@@ -225,12 +290,12 @@ class _TopBar extends StatelessWidget {
             child: CircleAvatar(
               radius: 18,
               backgroundColor: colors.primary,
-              backgroundImage: photoBase64 != null
-                  ? MemoryImage(base64Decode(photoBase64!))
+              backgroundImage: widget.photoBase64 != null
+                  ? MemoryImage(base64Decode(widget.photoBase64!))
                   : null,
-              child: photoBase64 == null
+              child: widget.photoBase64 == null
                   ? Text(
-                      initial,
+                      widget.initial,
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
@@ -242,41 +307,56 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Container(
-              height: 40,
+              height: 46,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(20),
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: colors.primary.withValues(alpha: 0.2),
+                ),
               ),
               child: TextField(
-                controller: controller,
-                onChanged: onChanged,
+                controller: widget.controller,
+                onChanged: widget.onChanged,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   isDense: true,
+                  filled: true,
+                  fillColor: Colors.transparent,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
                   border: InputBorder.none,
-                  prefixIcon: Icon(
-                    Icons.search,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  hintText: 'ค้นหาโพสต์...',
+                  prefixIcon: Icon(Icons.search_rounded, color: colors.primary),
+                  suffixIcon: widget.controller.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'ล้างการค้นหา',
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () {
+                            widget.controller.clear();
+                            widget.onChanged('');
+                          },
+                        ),
+                  hintText: widget.hintText,
                   hintStyle: TextStyle(
                     fontSize: 14,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    color: colors.onSurfaceVariant,
                   ),
                 ),
               ),
             ),
           ),
-          if (onRefresh != null)
+          if (widget.onRefresh != null)
             IconButton(
               tooltip: 'รีเฟรชฟีด',
               icon: const Icon(Icons.refresh),
-              onPressed: onRefresh,
+              onPressed: widget.onRefresh,
             ),
           PopupMenuButton<String>(
             tooltip: 'เมนู',
-            icon: const Icon(Icons.menu),
+            icon: NotificationDot(
+              show: hasPendingRequests,
+              child: const Icon(Icons.menu),
+            ),
             onSelected: (value) {
               final myUid = FirebaseAuth.instance.currentUser?.uid;
               switch (value) {
@@ -303,16 +383,43 @@ class _TopBar extends StatelessWidget {
                     ),
                   );
                   break;
+                case 'feedback':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const FeedbackScreen(),
+                    ),
+                  );
+                  break;
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(value: 'profile', child: Text('หน้าโปรไฟล์')),
-              PopupMenuItem(value: 'requests', child: Text('คำขอเป็นเพื่อน')),
+              PopupMenuItem(
+                value: 'requests',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('คำขอเป็นเพื่อน'),
+                    if (friendRequestCount > 0) ...[
+                      const SizedBox(width: 10),
+                      const NotificationDot(
+                        show: true,
+                        child: SizedBox(width: 8, height: 8),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
               PopupMenuItem(value: 'settings', child: Text('การตั้งค่าบัญชี')),
+              PopupMenuItem(value: 'feedback', child: Text('ส่ง Feedback')),
             ],
           ),
         ],
       ),
+    );
+          },
+        );
+      },
     );
   }
 }

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 
-enum AppThemeChoice { red, green }
+enum AppThemeChoice { orange, green }
 
 class AppTheme {
   static final ValueNotifier<AppThemeChoice> choice =
-      ValueNotifier(AppThemeChoice.red);
+      ValueNotifier(AppThemeChoice.orange);
 
   static Color seed(AppThemeChoice choice) => switch (choice) {
-        AppThemeChoice.red => const Color(0xFFED4245),
+        AppThemeChoice.orange => const Color(0xFFF4511E),
         AppThemeChoice.green => const Color(0xFF3BA55C),
       };
 

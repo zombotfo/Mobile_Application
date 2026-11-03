@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
     return ValueListenableBuilder<AppThemeChoice>(
       valueListenable: AppTheme.choice,
       builder: (context, choice, _) => MaterialApp(
-      title: 'Community',
+      title: 'Agora',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.build(choice),
       home: const AuthGate(),

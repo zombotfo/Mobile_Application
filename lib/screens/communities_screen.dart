@@ -8,7 +8,9 @@ import 'create_community_screen.dart';
 
 /// แท็บ "ชุมชน": ช่องค้นหา + ชุมชนของฉัน + ปุ่มสร้างชุมชนใหม่
 class CommunitiesScreen extends StatefulWidget {
-  const CommunitiesScreen({super.key});
+  const CommunitiesScreen({super.key, required this.searchQuery});
+
+  final String searchQuery;
 
   @override
   State<CommunitiesScreen> createState() => _CommunitiesScreenState();
@@ -16,8 +18,6 @@ class CommunitiesScreen extends StatefulWidget {
 
 class _CommunitiesScreenState extends State<CommunitiesScreen> {
   final _service = CommunityService();
-  final _searchController = TextEditingController();
-
   List<Community>? _mine;
   List<Community> _results = [];
   bool _hasError = false;
@@ -28,12 +28,15 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
   void initState() {
     super.initState();
     _loadMine();
+    if (widget.searchQuery.trim().isNotEmpty) _search(widget.searchQuery);
   }
 
   @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
+  void didUpdateWidget(covariant CommunitiesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchQuery != widget.searchQuery) {
+      _search(widget.searchQuery);
+    }
   }
 
   Future<void> _loadMine() async {
@@ -61,12 +64,15 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
   }
 
   Future<void> _open(Community community) async {
-    await Navigator.of(context).push(
+    final deleted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => CommunityScreen(communityId: community.id),
       ),
     );
-    _loadMine(); // เข้า/ออกชุมชนมาแล้ว ลิสต์ของฉันอาจเปลี่ยน
+    _loadMine();
+    if (deleted == true && _searching) {
+      _search(widget.searchQuery);
+    }
   }
 
   Future<void> _createCommunity() async {
@@ -105,7 +111,7 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
       if (_results.isEmpty) {
         return Center(
           child: Text(
-            'ไม่พบชุมชนที่ตรงกับ "${_searchController.text}"',
+            'ไม่พบชุมชนที่ตรงกับ "${widget.searchQuery}"',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -160,31 +166,21 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
     return Scaffold(
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-            child: TextField(
-              controller: _searchController,
-              onChanged: _search,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'ค้นหาชุมชน...',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                filled: true,
-                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ),
           Expanded(child: _buildBody()),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _createCommunity,
-        icon: const Icon(Icons.group_add_outlined),
-        label: const Text('สร้างชุมชน'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
+        elevation: 4,
+        extendedPadding: const EdgeInsets.symmetric(horizontal: 22),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text(
+          'สร้างชุมชน',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }

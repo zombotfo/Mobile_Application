@@ -30,7 +30,7 @@ class CommunityService {
   CollectionReference<Map<String, dynamic>> get _posts =>
       _db.collection('posts');
 
-  static final RegExp nameRegex = RegExp(r'^[A-Za-z0-9_]{3,21}$');
+  static final RegExp nameRegex = RegExp(r'^[A-Za-z0-9_ก-๙]{3,21}$');
 
   /// id เอกสารสมาชิก ใช้ ~ คั่น เพราะชื่อชุมชนมี _ ได้ (กันแยกส่วนผิด)
   String memberDocId(String communityId, String uid) => '$communityId~$uid';
@@ -54,7 +54,7 @@ class CommunityService {
 
     final trimmed = name.trim();
     if (!nameRegex.hasMatch(trimmed)) {
-      throw Exception('ชื่อชุมชนใช้ได้เฉพาะ a-z, 0-9 และ _ ความยาว 3–21 ตัวอักษร');
+      throw Exception('ชื่อชุมชนใช้ภาษาไทย a-z, 0-9 และ _ ได้ ความยาว 3–21 ตัวอักษร');
     }
     if (imageBytes != null && imageBytes.length > _maxIconBytes) {
       throw Exception('รูปใหญ่เกินไป (จำกัดประมาณ 700KB) ลองเลือกรูปอื่น');
@@ -100,6 +100,52 @@ class CommunityService {
   Future<Community?> fetchCommunity(String communityId) async {
     final doc = await _communities.doc(communityId).get();
     return doc.exists ? Community.fromDoc(doc) : null;
+  }
+
+  /// Deletes a community and its member, post, and post subcollection records.
+  /// The ownership check is repeated here so callers cannot delete another
+  /// user's community by passing an arbitrary id.
+  Future<void> deleteCommunity(String communityId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
+
+    final communityRef = _communities.doc(communityId);
+    final community = await communityRef.get();
+    if (!community.exists || community.data()?['ownerId'] != user.uid) {
+      throw Exception('คุณไม่มีสิทธิ์ลบชุมชนนี้');
+    }
+
+    final members = await _members
+        .where('communityId', isEqualTo: communityId)
+        .where('ownerId', isEqualTo: user.uid)
+        .get();
+    final posts = await _posts
+        .where('communityId', isEqualTo: communityId)
+        .get();
+
+    final references = <DocumentReference<Map<String, dynamic>>>[
+      ...members.docs.map((doc) => doc.reference),
+    ];
+    for (final post in posts.docs) {
+      for (final subcollection in ['votes', 'comments', 'reactions', 'reports']) {
+        final children = await post.reference.collection(subcollection).get();
+        references.addAll(children.docs.map((doc) => doc.reference));
+      }
+      references.add(post.reference);
+    }
+    references.add(communityRef);
+
+    // Rules for nested records check the post and its community owner. Keep
+    // each commit small enough to stay within Firestore's rule lookup limit.
+    const batchLimit = 10;
+    for (var start = 0; start < references.length; start += batchLimit) {
+      final end = (start + batchLimit).clamp(0, references.length).toInt();
+      final batch = _db.batch();
+      for (final reference in references.sublist(start, end)) {
+        batch.delete(reference);
+      }
+      await batch.commit();
+    }
   }
 
   Future<List<Community>> fetchCommunitiesByIds(Iterable<String> ids) async {
@@ -216,6 +262,46 @@ class CommunityService {
         .map(CommunityMember.fromDoc)
         .where((m) => m.status == 'pending')
         .toList();
+  }
+
+  /// Live count of pending join requests across communities owned by this user.
+  Stream<int> pendingRequestsCountForOwnerStream() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return Stream<int>.value(0);
+
+    return _members
+        .where('ownerId', isEqualTo: user.uid)
+        .snapshots()
+        .map((snap) => snap.docs
+            .where((doc) => doc.data()['status'] == 'pending')
+            .length);
+  }
+
+  /// Live count of pending requests for one owned community.
+  Stream<int> pendingRequestsCountStream(String communityId) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return Stream<int>.value(0);
+
+    return _members
+        .where('communityId', isEqualTo: communityId)
+        .where('ownerId', isEqualTo: user.uid)
+        .snapshots()
+        .map((snap) => snap.docs
+            .where((doc) => doc.data()['status'] == 'pending')
+            .length);
+  }
+
+  /// Active members only; pending join requests are never included.
+  Future<List<CommunityMember>> fetchActiveMembers(String communityId) async {
+    final snap = await _members
+        .where('communityId', isEqualTo: communityId)
+        .where('status', isEqualTo: 'active')
+        .get();
+    final members = snap.docs.map(CommunityMember.fromDoc).toList();
+    members.sort(
+      (a, b) => a.username.toLowerCase().compareTo(b.username.toLowerCase()),
+    );
+    return members;
   }
 
   Future<void> approveRequest(String communityId, String memberUid) async {

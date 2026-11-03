@@ -166,8 +166,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                   valueListenable: AppTheme.choice,
                   builder: (context, selected, _) => Column(
                     children: [
-                      _themeOption(AppThemeChoice.red, selected, 'แดง',
-                          const Color(0xFFED4245)),
+                      _themeOption(AppThemeChoice.orange, selected, 'สีส้ม',
+                          const Color(0xFFF4511E)),
                       _themeOption(AppThemeChoice.green, selected, 'เขียว',
                           const Color(0xFF3BA55C)),
                     ],

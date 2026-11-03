@@ -156,12 +156,12 @@ class _CreateCommunityScreenState extends State<CreateCommunityScreen> {
               decoration: const InputDecoration(
                 labelText: 'ชื่อชุมชน',
                 prefixText: 'r/',
-                helperText: 'ใช้ได้เฉพาะ a-z, 0-9 และ _ (3–21 ตัวอักษร) แก้ชื่อทีหลังไม่ได้',
+                helperText: 'ใช้ภาษาไทย a-z, 0-9 และ _ ได้ (3–21 ตัวอักษร) แก้ชื่อทีหลังไม่ได้',
                 counterText: '',
               ),
               validator: (value) {
                 if (!CommunityService.nameRegex.hasMatch(value?.trim() ?? '')) {
-                  return 'ใช้ได้เฉพาะ a-z, 0-9 และ _ (3–21 ตัวอักษร)';
+                  return 'ใช้ภาษาไทย a-z, 0-9 และ _ ได้ (3–21 ตัวอักษร)';
                 }
                 return null;
               },
