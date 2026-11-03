@@ -512,7 +512,9 @@ class _NavItem extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        // Keep a little vertical slack for devices whose text metrics round up
+        // fractional pixels in the bottom navigation bar.
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
