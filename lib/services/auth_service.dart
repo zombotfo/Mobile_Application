@@ -1,3 +1,4 @@
+/// รวมการทำงานยืนยันตัวตนและจัดการบัญชีผ่าน Firebase Auth
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'firestore_service.dart';
@@ -58,6 +59,20 @@ class AuthService {
     );
     await user.reauthenticateWithCredential(credential);
     await user.verifyBeforeUpdateEmail(newEmail.trim());
+  }
+
+  Future<void> reauthenticateWithPassword(String password) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw FirebaseAuthException(code: 'no-current-user');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+    await user.reauthenticateWithCredential(credential);
   }
 
   Future<void> signOut() => _auth.signOut();

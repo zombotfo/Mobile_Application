@@ -1,3 +1,4 @@
+/// แทนข้อมูลข้อความหนึ่งรายการภายในห้องแชท
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ChatMessage {

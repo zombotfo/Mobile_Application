@@ -475,6 +475,11 @@ class FirestoreService {
 
     final uid = user.uid;
     final ownPosts = await _posts.where('authorId', isEqualTo: uid).get();
+    final ownBlocks = await _db
+        .collection('blocks')
+        .doc(uid)
+        .collection('blockedUsers')
+        .get();
 
     final batch = _db.batch();
     for (final doc in ownPosts.docs) {
@@ -482,6 +487,14 @@ class FirestoreService {
     }
     batch.delete(_users.doc(uid));
     await batch.commit();
+
+    for (var start = 0; start < ownBlocks.docs.length; start += 450) {
+      final blockBatch = _db.batch();
+      for (final doc in ownBlocks.docs.skip(start).take(450)) {
+        blockBatch.delete(doc.reference);
+      }
+      await blockBatch.commit();
+    }
 
     // ลบบัญชีจริงจาก Firebase Auth เป็นขั้นตอนสุดท้าย
     // (ถ้า session เก่าเกินไป Firebase จะโยน error 'requires-recent-login'

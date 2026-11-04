@@ -1,3 +1,4 @@
+/// แทนข้อมูลโพสต์และแปลงข้อมูลจาก Firestore
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Post {

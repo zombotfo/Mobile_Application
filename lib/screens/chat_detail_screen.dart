@@ -1,3 +1,5 @@
+/// แสดงบทสนทนาและช่องส่งข้อความของห้องแชท
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -31,13 +33,52 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   // สร้าง stream ครั้งเดียว (late final) เช่นเดียวกับที่แก้ไว้ในฟีดโพสต์
   // กันไม่ให้ subscribe ใหม่ทุกครั้งที่ widget rebuild
-  late final Stream<List<ChatMessage>> _messagesStream =
-      _chatService.messagesStream(widget.chatId);
+  late Stream<List<ChatMessage>> _messagesStream;
   late final Stream<Map<String, dynamic>?> _otherProfileStream =
       _chatService.userProfileStream(widget.otherUserId);
+  Timer? _messageLoadTimer;
+  bool _messageLoadTimedOut = false;
+  bool _receivedMessageSnapshot = false;
 
   bool _sending = false;
   final _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _messagesStream = _chatService.messagesStream(widget.chatId);
+    _startMessageLoadTimer();
+  }
+
+  void _startMessageLoadTimer() {
+    _messageLoadTimer?.cancel();
+    _messageLoadTimedOut = false;
+    _receivedMessageSnapshot = false;
+    _messageLoadTimer = Timer(const Duration(seconds: 15), () {
+      if (!mounted || _receivedMessageSnapshot) return;
+      setState(() => _messageLoadTimedOut = true);
+    });
+  }
+
+  void _retryMessages() {
+    setState(() {
+      _messagesStream = _chatService.messagesStream(widget.chatId);
+      _messageLoadTimedOut = false;
+      _receivedMessageSnapshot = false;
+    });
+    _startMessageLoadTimer();
+  }
+
+  String _messageTime(DateTime timestamp) {
+    final local = timestamp.toLocal();
+    final now = DateTime.now();
+    final time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    if (local.year == now.year && local.month == now.month && local.day == now.day) {
+      return time;
+    }
+    return '${local.day}/${local.month} $time';
+  }
 
   Future<void> _pickImage() async {
     if (_sending) return;
@@ -134,6 +175,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   @override
   void dispose() {
+    _messageLoadTimer?.cancel();
     _textController.dispose();
     super.dispose();
   }
@@ -163,12 +205,41 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        titleSpacing: 0,
         title: StreamBuilder<Map<String, dynamic>?>(
           stream: _otherProfileStream,
           builder: (context, snapshot) {
-            final username =
-                snapshot.data?['username'] as String? ?? widget.otherUsername;
-            return Text('u/$username');
+            final profile = snapshot.data;
+            final username = profile?['username'] as String? ?? widget.otherUsername;
+            final encodedPhoto = profile?['photoBase64'] as String?;
+            ImageProvider<Object>? photo;
+            if (encodedPhoto != null && encodedPhoto.isNotEmpty) {
+              try {
+                photo = MemoryImage(base64Decode(encodedPhoto));
+              } on FormatException {
+                photo = null;
+              }
+            }
+            return Row(
+              children: [
+                CircleAvatar(
+                  radius: 19,
+                  backgroundImage: photo,
+                  child: photo == null
+                      ? Text(username.isNotEmpty ? username[0].toUpperCase() : '?')
+                      : null,
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    username,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            );
           },
         ),
       ),
@@ -179,11 +250,38 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               stream: _messagesStream,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return const Center(child: Text('โหลดข้อความไม่สำเร็จ'));
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('โหลดข้อความไม่สำเร็จ'),
+                        TextButton(
+                          onPressed: _retryMessages,
+                          child: const Text('ลองใหม่'),
+                        ),
+                      ],
+                    ),
+                  );
                 }
                 if (!snapshot.hasData) {
+                  if (_messageLoadTimedOut) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('หมดเวลารอการเชื่อมต่อ'),
+                          TextButton(
+                            onPressed: _retryMessages,
+                            child: const Text('ลองใหม่'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                   return const Center(child: CircularProgressIndicator());
                 }
+                _receivedMessageSnapshot = true;
+                _messageLoadTimer?.cancel();
                 final messages = snapshot.data!;
                 if (messages.isEmpty) {
                   return const Center(
@@ -195,7 +293,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 }
                 return ListView.builder(
                   reverse: true,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     final msg = messages[index];
@@ -207,26 +305,42 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       alignment:
                           isMe ? Alignment.centerRight : Alignment.centerLeft,
                       child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        margin: const EdgeInsets.symmetric(vertical: 5),
                         padding: isMediaOnly
                             ? EdgeInsets.zero
                             : const EdgeInsets.symmetric(
                                 horizontal: 14,
-                                vertical: 10,
+                                vertical: 9,
                               ),
                         constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.7,
+                          maxWidth: MediaQuery.of(context).size.width * 0.78,
                         ),
                         decoration: BoxDecoration(
                           color: isMediaOnly
                               ? Colors.transparent
                               : isMe
                                   ? colors.primary
-                                  : const Color(0xFFF0F0F1),
-                          borderRadius: BorderRadius.circular(16),
+                                  : colors.surfaceContainerHighest,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(18),
+                            topRight: const Radius.circular(18),
+                            bottomLeft: Radius.circular(isMe ? 18 : 5),
+                            bottomRight: Radius.circular(isMe ? 5 : 18),
+                          ),
+                          boxShadow: isMediaOnly
+                              ? null
+                              : [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.045),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                         ),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: isMe
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
                           children: [
                             if (msg.mediaBase64 != null && msg.mediaType == 'image')
                               Image.memory(
@@ -261,7 +375,33 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                 width: MediaQuery.of(context).size.width * 0.7,
                               ),
                             if (msg.text.isNotEmpty)
-                              Text(msg.text, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
+                              Text(
+                                msg.text,
+                                style: TextStyle(
+                                  color: isMe ? colors.onPrimary : colors.onSurface,
+                                  fontSize: 15,
+                                  height: 1.35,
+                                ),
+                              ),
+                            Padding(
+                              padding: EdgeInsets.only(
+                                top: isMediaOnly ? 5 : 4,
+                                left: isMediaOnly ? 0 : 2,
+                                right: isMediaOnly ? 0 : 2,
+                                bottom: isMediaOnly ? 2 : 0,
+                              ),
+                              child: Text(
+                                _messageTime(msg.sentAt),
+                                style: TextStyle(
+                                  color: isMediaOnly
+                                      ? colors.onSurfaceVariant
+                                      : isMe
+                                          ? colors.onPrimary.withValues(alpha: 0.75)
+                                          : colors.onSurfaceVariant,
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -273,8 +413,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           ),
           SafeArea(
             top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                border: Border(
+                  top: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.55)),
+                ),
+              ),
               child: Row(
                 children: [
                   IconButton(
@@ -297,23 +443,35 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       controller: _textController,
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => _send(),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: 'พิมพ์ข้อความ...',
                         isDense: true,
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(24)),
+                          borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide.none,
                         ),
                         filled: true,
-                        fillColor: Color(0xFFF0F0F1),
+                        fillColor: colors.surfaceContainerHighest.withValues(alpha: 0.7),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.send),
+                  IconButton.filled(
+                    tooltip: 'ส่งข้อความ',
+                    icon: _sending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded, size: 19),
                     onPressed: _sending ? null : _send,
                   ),
                 ],

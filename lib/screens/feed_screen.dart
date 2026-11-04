@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/post_model.dart';
 import '../services/community_service.dart';
+import '../services/block_service.dart';
 import '../services/firestore_service.dart';
 import '../widgets/post_card.dart';
 
@@ -26,83 +27,137 @@ class FeedScreen extends StatefulWidget {
 class FeedScreenState extends State<FeedScreen> {
   final _firestoreService = FirestoreService();
   final _communityService = CommunityService();
+  final _blockService = BlockService();
   StreamSubscription<List<Post>>? _postsSubscription;
+  StreamSubscription<Set<String>>? _blocksSubscription;
+  Timer? _initialLoadTimer;
 
   List<Post>? _posts;
+  List<Post> _allPosts = <Post>[];
+  Set<String> _myCommunityIds = <String>{};
+  Set<String> _blockedUserIds = <String>{};
+  bool _receivedPosts = false;
   bool _loading = true;
   bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
+    _blocksSubscription = _blockService.blockedUserIdsStream().listen((ids) {
+      final changed = !_sameIds(_blockedUserIds, ids);
+      _blockedUserIds = ids;
+      if (changed && _receivedPosts) _applyPosts();
+    }, onError: (Object error) {
+      debugPrint('FeedScreen: failed to watch block list: $error');
+    });
     _listenToPosts();
   }
 
   @override
   void dispose() {
     _postsSubscription?.cancel();
+    _blocksSubscription?.cancel();
+    _initialLoadTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _listenToPosts() async {
-    Set<String> myCommunityIds = <String>{};
-    try {
-      myCommunityIds = await _communityService.fetchMyActiveCommunityIds();
-    } catch (e) {
-      debugPrint('FeedScreen: failed to load community membership: $e');
-    }
-    if (!mounted) return;
+  void _listenToPosts() {
+    _initialLoadTimer?.cancel();
+    _initialLoadTimer = Timer(const Duration(seconds: 15), () {
+      if (!mounted || _receivedPosts) return;
+      setState(() {
+        _hasError = true;
+        _loading = false;
+      });
+    });
+
+    _loadCommunityMembership();
     _postsSubscription = _firestoreService.postsStream().listen(
       (allPosts) {
-        final posts = CommunityService.filterVisible(allPosts, myCommunityIds);
-        if (!mounted) return;
-        setState(() {
-          _posts = posts;
-          _hasError = false;
-          _loading = false;
-        });
+        _allPosts = allPosts;
+        _receivedPosts = true;
+        _applyPosts();
       },
       onError: (Object error) {
         debugPrint('FeedScreen: post stream failed: $error');
+        _initialLoadTimer?.cancel();
         if (!mounted) return;
         setState(() {
-          _hasError = true;
+          _hasError = !_receivedPosts;
           _loading = false;
         });
       },
     );
   }
 
+  Future<void> _loadCommunityMembership() async {
+    try {
+      _myCommunityIds = await _communityService
+          .fetchMyActiveCommunityIds()
+          .timeout(const Duration(seconds: 12));
+    } catch (e) {
+      debugPrint('FeedScreen: failed to load community membership: $e');
+      _myCommunityIds = <String>{};
+    }
+    if (mounted && _receivedPosts) _applyPosts();
+  }
+
+  void _applyPosts() {
+    final posts = CommunityService.filterVisible(_allPosts, _myCommunityIds)
+        .where((post) => !_blockedUserIds.contains(post.authorId))
+        .toList();
+    if (!mounted) return;
+    _initialLoadTimer?.cancel();
+    setState(() {
+      _posts = posts;
+      _hasError = false;
+      _loading = false;
+    });
+  }
+
   Future<void> _refresh() async {
     try {
-      final allPosts = await _firestoreService.fetchPosts();
+      final allPosts = await _firestoreService
+          .fetchPosts()
+          .timeout(const Duration(seconds: 15));
 
       // หน้า home โชว์เฉพาะโพสต์ทั่วไป + โพสต์ในชุมชนที่เราเป็นสมาชิก
       // ถ้าโหลดรายการชุมชนของเราไม่ได้ ให้ซ่อนโพสต์ชุมชนทั้งหมดไว้ก่อน
       // (ปลอดภัยไว้ก่อน ดีกว่าโชว์โพสต์ของชุมชนที่เราไม่ได้อยู่)
       Set<String> myCommunityIds;
       try {
-        myCommunityIds = await _communityService.fetchMyActiveCommunityIds();
+        myCommunityIds = await _communityService
+            .fetchMyActiveCommunityIds()
+            .timeout(const Duration(seconds: 12));
       } catch (e) {
         debugPrint('FeedScreen: โหลดชุมชนของฉันไม่ได้ $e');
         myCommunityIds = <String>{};
       }
       final posts = CommunityService.filterVisible(allPosts, myCommunityIds);
+      final visiblePosts = posts
+          .where((post) => !_blockedUserIds.contains(post.authorId))
+          .toList();
 
       if (!mounted) return;
+      _allPosts = allPosts;
+      _myCommunityIds = myCommunityIds;
+      _receivedPosts = true;
       setState(() {
-        _posts = posts;
+        _posts = visiblePosts;
         _hasError = false;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _hasError = true;
+        _hasError = !_receivedPosts;
         _loading = false;
       });
     }
   }
+
+  bool _sameIds(Set<String> a, Set<String> b) =>
+      a.length == b.length && a.containsAll(b);
 
   /// เรียกจากภายนอกผ่าน GlobalKey ได้ เช่นตอนสร้างโพสต์ใหม่สำเร็จ
   /// อยากเห็นผลทันทีโดยไม่ต้องรอครบ 1 นาที

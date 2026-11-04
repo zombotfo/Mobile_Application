@@ -13,6 +13,16 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/communityMembers/$(cid + '~' + request.auth.uid)).data.status == 'active';
     }
 
+    function isBlockedBetween(uidA, uidB) {
+      return exists(/databases/$(database)/documents/blocks/$(uidA)/blockedUsers/$(uidB))
+             || exists(/databases/$(database)/documents/blocks/$(uidB)/blockedUsers/$(uidA));
+    }
+
+    function chatHasBlock(participants) {
+      return participants.size() == 2
+             && isBlockedBetween(participants[0], participants[1]);
+    }
+
     // The owner of a community can moderate and remove the content stored in it.
     function isCommunityOwnerOfPost(postId) {
       let post = get(/databases/$(database)/documents/posts/$(postId)).data;
@@ -52,6 +62,26 @@ service cloud.firestore {
     // จะอนุญาตไว้แล้วก็ตาม
     match /{path=**}/following/{targetUid} {
       allow read: if request.auth != null;
+    }
+
+    // Block records: only the blocker can manage their list. Either account
+    // in the pair may read the exact relationship; users can query inbound
+    // blocks with blockedUid == their own uid.
+    match /blocks/{blockerUid}/blockedUsers/{blockedUid} {
+      allow get: if request.auth != null
+                 && (request.auth.uid == blockerUid
+                     || request.auth.uid == blockedUid);
+      allow list: if request.auth != null
+                  && (request.auth.uid == blockerUid
+                      || resource.data.blockedUid == request.auth.uid);
+      allow create: if request.auth != null
+                    && request.auth.uid == blockerUid
+                    && blockedUid == request.resource.data.blockedUid
+                    && request.resource.data.blockerUid == blockerUid
+                    && blockerUid != blockedUid;
+      allow delete: if request.auth != null
+                    && request.auth.uid == blockerUid;
+      allow update: if false;
     }
 
     // Feedback จากผู้ใช้: ส่งได้เฉพาะข้อความของบัญชีที่ล็อกอิน
@@ -105,12 +135,19 @@ service cloud.firestore {
 
     // ห้องแชท: อ่าน/เขียนได้เฉพาะคนที่อยู่ใน participants ของห้องนั้น
     match /chats/{chatId} {
-      allow read: if request.auth != null
+      allow get: if request.auth != null
+                 && request.auth.uid in resource.data.participants
+                 && !chatHasBlock(resource.data.participants);
+      // List queries are filtered by BlockService in the client because
+      // Firestore rules cannot filter query results by block relationship.
+      allow list: if request.auth != null
                   && request.auth.uid in resource.data.participants;
       allow create: if request.auth != null
-                    && request.auth.uid in request.resource.data.participants;
+                    && request.auth.uid in request.resource.data.participants
+                    && !chatHasBlock(request.resource.data.participants);
       allow update: if request.auth != null
-                    && request.auth.uid in resource.data.participants;
+                    && request.auth.uid in resource.data.participants
+                    && !chatHasBlock(resource.data.participants);
       allow delete: if false;
 
       // ข้อความ: อ่านได้เฉพาะคนในห้องแชท ส่งได้เฉพาะในนามตัวเอง (กัน
@@ -119,12 +156,18 @@ service cloud.firestore {
         allow read: if request.auth != null
                     && request.auth.uid in get(
                         /databases/$(database)/documents/chats/$(chatId)
-                      ).data.participants;
+                      ).data.participants
+                    && !chatHasBlock(get(
+                        /databases/$(database)/documents/chats/$(chatId)
+                      ).data.participants);
         allow create: if request.auth != null
                       && request.auth.uid == request.resource.data.senderId
                       && request.auth.uid in get(
                           /databases/$(database)/documents/chats/$(chatId)
-                        ).data.participants;
+                        ).data.participants
+                      && !chatHasBlock(get(
+                          /databases/$(database)/documents/chats/$(chatId)
+                        ).data.participants);
         allow update, delete: if false;
       }
     }
@@ -193,7 +236,11 @@ service cloud.firestore {
     }
 
     match /posts/{postId} {
-      allow read: if request.auth != null;
+      allow get: if request.auth != null
+                 && !isBlockedBetween(resource.data.authorId, request.auth.uid);
+      // Feed queries filter block relationships in BlockService; Firestore
+      // security rules cannot remove individual documents from query results.
+      allow list: if request.auth != null;
       // โพสต์ทั่วไป (communityId เป็น null) ใครก็โพสต์ได้ แต่ถ้าโพสต์ลงชุมชน
       // ต้องเป็นสมาชิกของชุมชนนั้นอยู่จริง (ตรวจฝั่งเซิร์ฟเวอร์ ไม่ใช่แค่ใน UI)
       allow create: if request.auth != null
@@ -213,7 +260,8 @@ service cloud.firestore {
                         .affectedKeys().hasOnly([
                           'upvoteCount', 'downvoteCount',
                           'commentCount', 'reactionCounts',
-                        ]);
+                        ])
+                    && !isBlockedBetween(resource.data.authorId, request.auth.uid);
 
       allow delete: if request.auth != null
                     && (resource.data.authorId == request.auth.uid
@@ -221,8 +269,15 @@ service cloud.firestore {
 
       // โหวต: แต่ละคนมีได้ 1 เอกสารต่อโพสต์ (doc id = uid ของตัวเอง)
       match /votes/{voterId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null && request.auth.uid == voterId;
+        allow read: if request.auth != null
+                    && !isBlockedBetween(get(
+                        /databases/$(database)/documents/posts/$(postId)
+                      ).data.authorId, request.auth.uid);
+        allow create, update: if request.auth != null
+                              && request.auth.uid == voterId
+                              && !isBlockedBetween(get(
+                                  /databases/$(database)/documents/posts/$(postId)
+                                ).data.authorId, request.auth.uid);
         // เจ้าของโพสต์ลบโหวตของคนอื่นได้ด้วย ตอนลบทั้งโพสต์ (cascading delete
         // ใน deletePost ของแอป) ไม่งั้นจะลบโหวตของคนอื่นไม่ได้ ทำให้ batch ล้มเหลว
         allow delete: if request.auth != null
@@ -234,9 +289,15 @@ service cloud.firestore {
       // อิโมจิ react: แต่ละคนมีได้ 1 เอกสารต่อโพสต์ (doc id = uid ของตัวเอง)
       // เหมือน votes — เจ้าของโพสต์ลบของคนอื่นได้ด้วยตอน cascading delete
       match /reactions/{reactorId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null
-                     && request.auth.uid == reactorId;
+        allow read: if request.auth != null
+                    && !isBlockedBetween(get(
+                        /databases/$(database)/documents/posts/$(postId)
+                      ).data.authorId, request.auth.uid);
+        allow create, update: if request.auth != null
+                              && request.auth.uid == reactorId
+                              && !isBlockedBetween(get(
+                                  /databases/$(database)/documents/posts/$(postId)
+                                ).data.authorId, request.auth.uid);
         allow delete: if request.auth != null
                       && (get(/databases/$(database)/documents/posts/$(postId))
                               .data.authorId == request.auth.uid
@@ -258,9 +319,15 @@ service cloud.firestore {
       // ลบได้ทั้งเจ้าของคอมเมนต์เอง หรือเจ้าของโพสต์ (ลบคอมเมนต์คนอื่น
       // ใต้โพสต์ตัวเองได้ + รองรับ cascading delete ตอนลบทั้งโพสต์)
       match /comments/{commentId} {
-        allow read: if request.auth != null;
+        allow read: if request.auth != null
+                    && !isBlockedBetween(get(
+                        /databases/$(database)/documents/posts/$(postId)
+                      ).data.authorId, request.auth.uid);
         allow create: if request.auth != null
-                      && request.resource.data.authorId == request.auth.uid;
+                      && request.resource.data.authorId == request.auth.uid
+                      && !isBlockedBetween(get(
+                          /databases/$(database)/documents/posts/$(postId)
+                        ).data.authorId, request.auth.uid);
         allow delete: if request.auth != null
                       && (resource.data.authorId == request.auth.uid
                           || get(/databases/$(database)/documents/posts/$(postId))

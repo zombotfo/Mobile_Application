@@ -1,3 +1,4 @@
+/// แสดงรายละเอียดโพสต์พร้อมรายการและช่องแสดงความคิดเห็น
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';

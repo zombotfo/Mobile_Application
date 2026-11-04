@@ -1,3 +1,4 @@
+/// แทนความสัมพันธ์หรือคำขอเป็นเพื่อนระหว่างผู้ใช้สองคน
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum FriendshipStatus {

@@ -1,3 +1,4 @@
+/// แทนข้อมูลความคิดเห็นที่ผูกอยู่กับโพสต์
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Comment {

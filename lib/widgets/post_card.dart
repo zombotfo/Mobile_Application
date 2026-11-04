@@ -1,3 +1,4 @@
+/// การ์ดแสดงโพสต์และปุ่มโต้ตอบที่ใช้ในฟีดและหน้าโปรไฟล์
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';

@@ -62,8 +62,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadMyPhoto() async {
-    final photo = await FirestoreService().fetchUserPhotoBase64(widget.user.uid);
-    if (mounted) setState(() => _myPhotoBase64 = photo);
+    try {
+      final photo = await FirestoreService()
+          .fetchUserPhotoBase64(widget.user.uid)
+          .timeout(const Duration(seconds: 12));
+      if (mounted) setState(() => _myPhotoBase64 = photo);
+    } catch (error) {
+      debugPrint('HomeScreen: failed to load profile photo: $error');
+    }
   }
 
   Future<void> _openEditProfile() async {
@@ -181,48 +187,6 @@ class _TopBarState extends State<_TopBar> {
   late final Stream<int> _communityRequestCountStream =
       CommunityService().pendingRequestsCountForOwnerStream();
 
-  Future<void> _confirmDeleteAccount(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('ลบบัญชี'),
-        content: const Text(
-          'บัญชีและโพสต์ทั้งหมดของคุณจะถูกลบถาวร ไม่สามารถกู้คืนได้ ยืนยันหรือไม่?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ยกเลิก'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'ลบบัญชี',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      await FirestoreService().deleteAccount();
-      // สำเร็จแล้ว: Firebase Auth user กลายเป็น null อัตโนมัติ
-      // AuthGate ใน main.dart จะพากลับไปหน้า Login เอง ไม่ต้อง navigate เอง
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'ลบบัญชีไม่สำเร็จ กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ก่อนลองอีกครั้ง',
-            ),
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<int>(
@@ -240,7 +204,7 @@ class _TopBarState extends State<_TopBar> {
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       child: Row(
         children: [
-          // โปรไฟล์: แตะเพื่อเปิดเมนู แก้ไขโปรไฟล์ / ออกจากระบบ / ลบบัญชี
+          // โปรไฟล์: แตะเพื่อเปิดเมนูแก้ไขโปรไฟล์ / เพื่อน / ออกจากระบบ
           PopupMenuButton<String>(
             tooltip: 'โปรไฟล์',
             onSelected: (value) {
@@ -257,9 +221,6 @@ class _TopBarState extends State<_TopBar> {
                   break;
                 case 'logout':
                   AuthService().signOut();
-                  break;
-                case 'delete':
-                  _confirmDeleteAccount(context);
                   break;
               }
             },
@@ -282,10 +243,6 @@ class _TopBarState extends State<_TopBar> {
                 ),
               ),
               PopupMenuItem(value: 'logout', child: Text('ออกจากระบบ')),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text('ลบบัญชี', style: TextStyle(color: Colors.red)),
-              ),
             ],
             child: CircleAvatar(
               radius: 18,

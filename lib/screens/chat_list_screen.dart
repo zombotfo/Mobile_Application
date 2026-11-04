@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/chat_model.dart';
+import '../services/block_service.dart';
 import '../services/chat_service.dart';
 import '../utils/time_ago.dart';
 import 'chat_detail_screen.dart';
@@ -21,8 +22,12 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _chatService = ChatService();
+  final _blockService = BlockService();
   StreamSubscription<List<ChatSummary>>? _chatsSubscription;
+  StreamSubscription<Set<String>>? _blocksSubscription;
+  Timer? _initialLoadTimer;
   List<ChatSummary>? _chats;
+  Set<String> _blockedIds = <String>{};
   Set<String>? _matchingChatIds;
   bool _loading = true;
   bool _searchFiltering = false;
@@ -31,13 +36,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void initState() {
     super.initState();
+    _blocksSubscription = _blockService.blockedUserIdsStream().listen((ids) {
+      if (!mounted) return;
+      setState(() => _blockedIds = ids);
+      _filterChats();
+    }, onError: (Object error) {
+      // Keep the chat list usable if block lookup is unavailable.
+      debugPrint('ChatListScreen: block stream failed: $error');
+    });
     _listenToChats();
   }
 
   @override
   void dispose() {
     _searchRequest++;
+    _initialLoadTimer?.cancel();
     _chatsSubscription?.cancel();
+    _blocksSubscription?.cancel();
     super.dispose();
   }
 
@@ -50,9 +65,19 @@ class _ChatListScreenState extends State<ChatListScreen> {
   bool _hasError = false;
 
   void _listenToChats() {
+    _chatsSubscription?.cancel();
+    _initialLoadTimer?.cancel();
+    _initialLoadTimer = Timer(const Duration(seconds: 15), () {
+      if (!mounted || _chats != null) return;
+      setState(() {
+        _hasError = true;
+        _loading = false;
+      });
+    });
     _chatsSubscription = _chatService.chatsStream().listen(
       (chats) {
         if (!mounted) return;
+        _initialLoadTimer?.cancel();
         setState(() {
           _chats = chats;
           _hasError = false;
@@ -61,6 +86,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         _filterChats();
       },
       onError: (Object error) {
+        _initialLoadTimer?.cancel();
         debugPrint('ChatListScreen: chat stream failed: $error');
         if (!mounted) return;
         setState(() {
@@ -90,7 +116,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     final matchingIds = <String>{};
     await Future.wait(chats.map((chat) async {
-      final profile = await _chatService.fetchUserProfile(chat.otherUserId);
+      if (_blockedIds.contains(chat.otherUserId)) return;
+      Map<String, dynamic>? profile;
+      try {
+        profile = await _chatService
+            .fetchUserProfile(chat.otherUserId)
+            .timeout(const Duration(seconds: 6));
+      } catch (error) {
+        debugPrint('Chat search profile lookup failed: $error');
+      }
       final username = profile?['username'] as String? ?? chat.otherUsername;
       if (username.toLowerCase().contains(query) ||
           chat.lastMessage.toLowerCase().contains(query)) {
@@ -107,15 +141,19 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _refresh() async {
     try {
-      final chats = await _chatService.fetchChats();
+      final chats = await _chatService
+          .fetchChats()
+          .timeout(const Duration(seconds: 15));
       if (!mounted) return;
+      _initialLoadTimer?.cancel();
       setState(() {
         _chats = chats;
         _hasError = false;
         _loading = false;
       });
       _filterChats();
-    } catch (_) {
+    } catch (error) {
+      debugPrint('ChatListScreen: refresh failed: $error');
       // เช่น ยังไม่ได้สร้าง Firestore composite index ให้ query นี้
       // กันไว้ไม่ให้ค้างเงียบๆ โดยไม่ขึ้นอะไรให้ผู้ใช้เห็นเลย
       if (!mounted) return;
@@ -181,6 +219,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  List<ChatSummary> get _visibleChats => (_chats ?? const <ChatSummary>[])
+      .where((chat) => !_blockedIds.contains(chat.otherUserId))
+      .where((chat) =>
+          _matchingChatIds == null || _matchingChatIds!.contains(chat.id))
+      .toList();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -198,7 +242,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         style: TextStyle(fontSize: 12, color: Colors.black45),
                       ),
                       TextButton(
-                        onPressed: _refresh,
+                        onPressed: () {
+                          setState(() {
+                            _hasError = false;
+                            _loading = true;
+                          });
+                          _listenToChats();
+                          _refresh();
+                        },
                         child: const Text('ลองใหม่'),
                       ),
                     ],
@@ -208,7 +259,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               onRefresh: _refresh,
               child: _searchFiltering
                   ? const Center(child: CircularProgressIndicator())
-                  : (_chats == null || _chats!.isEmpty)
+                  : (_visibleChats.isEmpty && widget.searchQuery.trim().isEmpty)
                   ? ListView(
                       children: const [
                         Padding(
@@ -232,16 +283,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           ],
                         )
                       : ListView.builder(
-                      itemCount: _chats!
-                          .where((chat) => _matchingChatIds == null ||
-                              _matchingChatIds!.contains(chat.id))
-                          .length,
+                      itemCount: _visibleChats.length,
                       itemBuilder: (context, index) {
-                        final visibleChats = _chats!
-                            .where((chat) => _matchingChatIds == null ||
-                                _matchingChatIds!.contains(chat.id))
-                            .toList();
-                        final chat = visibleChats[index];
+                        final chat = _visibleChats[index];
                         return _chatTile(chat);
                       },
                     ),

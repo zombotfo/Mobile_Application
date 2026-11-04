@@ -1,3 +1,4 @@
+/// หน้าล็อกอินและสมัครบัญชีผู้ใช้ด้วย Firebase Authentication
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -15,6 +16,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   final _authService = AuthService();
 
   bool _isLogin = true;
@@ -30,6 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -83,6 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _toggleMode() {
     setState(() => _isLogin = !_isLogin);
+    _confirmPasswordController.clear();
     _formKey.currentState?.reset();
   }
 
@@ -267,11 +271,20 @@ class _LoginScreenState extends State<LoginScreen> {
                               TextFormField(
                                 controller: _passwordController,
                                 obscureText: _obscurePassword,
-                                textInputAction: TextInputAction.done,
+                                textInputAction: _isLogin
+                                    ? TextInputAction.done
+                                    : TextInputAction.next,
                                 autofillHints: [
                                   _isLogin ? AutofillHints.password : AutofillHints.newPassword,
                                 ],
-                                onFieldSubmitted: (_) { if (!_loading) _submit(); },
+                                onFieldSubmitted: (_) {
+                                  if (_loading) return;
+                                  if (_isLogin) {
+                                    _submit();
+                                  } else {
+                                    FocusScope.of(context).nextFocus();
+                                  }
+                                },
                                 decoration: _inputDecoration('รหัสผ่าน', Icons.lock_outline_rounded).copyWith(
                                   suffixIcon: IconButton(
                                     tooltip: _obscurePassword ? 'แสดงรหัสผ่าน' : 'ซ่อนรหัสผ่าน',
@@ -288,6 +301,46 @@ class _LoginScreenState extends State<LoginScreen> {
                                   return null;
                                 },
                               ),
+                              if (!_isLogin) ...[
+                                const SizedBox(height: 14),
+                                TextFormField(
+                                  controller: _confirmPasswordController,
+                                  obscureText: _obscurePassword,
+                                  textInputAction: TextInputAction.done,
+                                  autofillHints: const [AutofillHints.newPassword],
+                                  onFieldSubmitted: (_) {
+                                    if (!_loading) _submit();
+                                  },
+                                  decoration: _inputDecoration(
+                                    'ยืนยันรหัสผ่าน',
+                                    Icons.lock_outline_rounded,
+                                  ).copyWith(
+                                    suffixIcon: IconButton(
+                                      tooltip: _obscurePassword
+                                          ? 'แสดงรหัสผ่าน'
+                                          : 'ซ่อนรหัสผ่าน',
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_outlined
+                                            : Icons.visibility_off_outlined,
+                                        color: const Color(0xFF77716C),
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _obscurePassword = !_obscurePassword,
+                                      ),
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'กรุณายืนยันรหัสผ่าน';
+                                    }
+                                    if (value != _passwordController.text) {
+                                      return 'รหัสผ่านไม่ตรงกัน';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ],
                               if (_isLogin)
                                 Align(
                                   alignment: Alignment.centerRight,

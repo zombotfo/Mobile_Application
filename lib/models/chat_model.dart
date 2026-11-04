@@ -1,3 +1,4 @@
+/// แทนข้อมูลห้องแชทระหว่างผู้ใช้
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ChatSummary {

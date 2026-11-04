@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/chat_message_model.dart';
 import '../models/chat_model.dart';
+import 'block_service.dart';
 import 'cloudinary_service.dart';
 
 /// ระบบแชท 1:1 คุยกับใครก็ได้ ไม่ต้องเป็นเพื่อนกันก่อน
@@ -18,6 +19,7 @@ class ChatService {
       _db.collection('users');
   CollectionReference<Map<String, dynamic>> get _chats =>
       _db.collection('chats');
+  final _blockService = BlockService();
 
   Stream<Map<String, dynamic>?> userProfileStream(String uid) =>
       _users.doc(uid).snapshots().map((doc) => doc.data());
@@ -43,7 +45,6 @@ class ChatService {
         .where('participants', arrayContains: user.uid)
         .orderBy('lastMessageAt', descending: true)
         .get();
-
     return snap.docs.map((d) => ChatSummary.fromDoc(d, user.uid)).toList();
   }
 
@@ -70,6 +71,10 @@ class ChatService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
+
+    if (await _blockService.isBlockedEitherWay(otherUid)) {
+      throw Exception('มีการบล็อกระหว่างบัญชี จึงไม่สามารถเริ่มแชตได้');
+    }
 
     if (user.uid != otherUid) {
       final targetDoc = await _users.doc(otherUid).get();
@@ -124,6 +129,7 @@ class ChatService {
     if (user == null) throw Exception('ยังไม่ได้เข้าสู่ระบบ');
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    await _ensureCanMessage(chatId, user.uid);
 
     final chatRef = _chats.doc(chatId);
     final batch = _db.batch();
@@ -146,6 +152,7 @@ class ChatService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
+    await _ensureCanMessage(chatId, user.uid);
     final bytes = await file.readAsBytes();
     if (bytes.length > _maxChatImageBytes) {
       throw Exception('รูปใหญ่เกินไป กรุณาเลือกภาพที่เล็กกว่า 650 KB');
@@ -175,6 +182,7 @@ class ChatService {
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('กรุณาเข้าสู่ระบบก่อน');
+    await _ensureCanMessage(chatId, user.uid);
     final bytes = await file.readAsBytes();
     if (bytes.length > _maxChatVideoBytes) {
       throw Exception('วิดีโอใหญ่เกินไป กรุณาเลือกคลิปที่เล็กกว่า 50 MB');
@@ -201,5 +209,19 @@ class ChatService {
       'lastSenderId': user.uid,
     });
     await batch.commit();
+  }
+
+  Future<void> _ensureCanMessage(String chatId, String uid) async {
+    final chat = await _chats.doc(chatId).get();
+    final participants = List<String>.from(
+      chat.data()?['participants'] as List? ?? const [],
+    );
+    if (!chat.exists || !participants.contains(uid)) {
+      throw Exception('ไม่พบห้องแชตนี้');
+    }
+    final otherUid = participants.firstWhere((id) => id != uid, orElse: () => '');
+    if (otherUid.isEmpty || await _blockService.isBlockedEitherWay(otherUid)) {
+      throw Exception('มีการบล็อกระหว่างบัญชี จึงไม่สามารถส่งข้อความได้');
+    }
   }
 }

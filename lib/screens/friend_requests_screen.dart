@@ -1,3 +1,4 @@
+/// แสดงคำขอเป็นเพื่อนที่รอให้ผู้ใช้ตอบรับหรือปฏิเสธ
 import 'package:flutter/material.dart';
 
 import '../models/friendship_model.dart';

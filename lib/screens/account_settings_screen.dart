@@ -1,3 +1,4 @@
+/// หน้าจัดการการตั้งค่าบัญชีและตัวเลือกความเป็นส่วนตัว
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -22,6 +23,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
   bool _isPrivate = false;
   bool _saving = false;
   bool _securityBusy = false;
+  bool _deleting = false;
   String? _accountEmail;
 
   static final _emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
@@ -142,6 +144,84 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
     }
   }
 
+  Future<void> _deleteAccount() async {
+    final passwordController = TextEditingController();
+    var obscurePassword = true;
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('ยืนยันการลบบัญชี'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('การลบบัญชีและโพสต์ทั้งหมดไม่สามารถกู้คืนได้'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                autofocus: true,
+                obscureText: obscurePassword,
+                decoration: InputDecoration(
+                  labelText: 'รหัสผ่านปัจจุบัน',
+                  suffixIcon: IconButton(
+                    tooltip: obscurePassword ? 'แสดงรหัสผ่าน' : 'ซ่อนรหัสผ่าน',
+                    icon: Icon(
+                      obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () => setDialogState(
+                      () => obscurePassword = !obscurePassword,
+                    ),
+                  ),
+                ),
+                onSubmitted: (_) => Navigator.pop(
+                  dialogContext,
+                  passwordController.text,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('ยกเลิก'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                passwordController.text,
+              ),
+              child: const Text('ยืนยันและลบ', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      ),
+    );
+    passwordController.dispose();
+    if (password == null || !mounted) return;
+    if (password.isEmpty) {
+      _showMessage('กรุณากรอกรหัสผ่านเพื่อยืนยัน');
+      return;
+    }
+
+    setState(() => _deleting = true);
+    try {
+      await _authService.reauthenticateWithPassword(password);
+      await _firestoreService.deleteAccount();
+      // Firebase Auth's user stream returns to the login screen after deletion.
+    } on FirebaseAuthException catch (e) {
+      _showMessage(AuthService.errorMessage(e));
+    } catch (_) {
+      _showMessage(
+        'ลบบัญชีไม่สำเร็จ กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ก่อนลองอีกครั้ง',
+      );
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -247,6 +327,31 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen>
                     style: TextStyle(
                       fontSize: 12.5,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const Divider(),
+                const ListTile(
+                  title: Text('การลบบัญชี'),
+                  subtitle: Text('ลบบัญชีและข้อมูลที่เกี่ยวข้องอย่างถาวร'),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _deleting ? null : _deleteAccount,
+                      icon: _deleting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.delete_outline, color: Colors.red),
+                      label: Text(
+                        _deleting ? 'กำลังลบบัญชี...' : 'ลบบัญชี',
+                        style: const TextStyle(color: Colors.red),
+                      ),
                     ),
                   ),
                 ),

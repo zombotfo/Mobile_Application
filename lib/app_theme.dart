@@ -1,3 +1,4 @@
+/// กำหนดชุดสีและธีมที่ใช้ร่วมกันในหน้าจอของแอป
 import 'package:flutter/material.dart';
 
 enum AppThemeChoice { orange, green }

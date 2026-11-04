@@ -1,3 +1,4 @@
+/// ปุ่มติดตามที่แสดงและเปลี่ยนการทำงานตามสถานะการติดตาม
 import 'package:flutter/material.dart';
 
 import '../services/follow_service.dart';

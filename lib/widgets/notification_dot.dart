@@ -1,3 +1,4 @@
+/// จุดแจ้งเตือนขนาดเล็กสำหรับบอกว่ามีรายการใหม่
 import 'package:flutter/material.dart';
 
 class NotificationDot extends StatelessWidget {
