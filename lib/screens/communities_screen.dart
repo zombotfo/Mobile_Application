@@ -19,6 +19,8 @@ class CommunitiesScreen extends StatefulWidget {
 class _CommunitiesScreenState extends State<CommunitiesScreen> {
   final _service = CommunityService();
   List<Community>? _mine;
+  List<Community> _recommended = [];
+  bool _recommendLoading = true;
   List<Community> _results = [];
   bool _hasError = false;
   bool _searching = false; // กำลังมีข้อความในช่องค้นหา
@@ -42,10 +44,33 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
   Future<void> _loadMine() async {
     try {
       final mine = await _service.fetchMyCommunities();
-      if (mounted) setState(() { _mine = mine; _hasError = false; });
+      if (mounted) {
+        setState(() {
+          _mine = mine;
+          _hasError = false;
+        });
+      }
+      try {
+        final recommended = await _service.fetchRecommendedCommunities(
+          excludeIds: mine.map((community) => community.id).toSet(),
+        );
+        if (mounted) {
+          setState(() {
+            _recommended = recommended;
+            _recommendLoading = false;
+          });
+        }
+      } catch (e) {
+        debugPrint('CommunitiesScreen: failed to load recommendations: $e');
+        if (mounted) setState(() => _recommendLoading = false);
+      }
     } catch (e) {
       debugPrint('CommunitiesScreen._loadMine error: $e');
-      if (mounted) setState(() => _hasError = true);
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
     }
   }
 
@@ -130,34 +155,56 @@ class _CommunitiesScreenState extends State<CommunitiesScreen> {
 
     return RefreshIndicator(
       onRefresh: _loadMine,
-      child: _mine!.isEmpty
-          ? ListView(
-              children: [
-                Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Text(
-                    'ยังไม่ได้เข้าร่วมชุมชนไหนเลย\nค้นหาชุมชนด้านบน หรือกดปุ่ม "สร้างชุมชน" เพื่อเริ่มต้น',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+      child: ListView(
+        children: [
+          if (_mine!.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                'ยังไม่ได้เข้าร่วมชุมชน ลองดูชุมชนแนะนำด้านล่าง',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-              ],
+              ),
             )
-          : ListView(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  child: Text(
-                    'ชุมชนของฉัน',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                ..._mine!.map(_tile),
-                const SizedBox(height: 72), // กันปุ่มสร้างชุมชนบังรายการล่างสุด
-              ],
+          else ...[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'ชุมชนของฉัน',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
             ),
+            ..._mine!.map(_tile),
+          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+            child: Text(
+              'ชุมชนแนะนำ',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+          if (_recommendLoading)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_recommended.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'ยังไม่มีชุมชนอื่นให้แนะนำ',
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+            )
+          else
+            ..._recommended.map(_tile),
+          const SizedBox(height: 72),
+        ],
+      ),
     );
   }
 

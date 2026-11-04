@@ -191,6 +191,22 @@ class CommunityService {
     return fetchCommunitiesByIds(ids);
   }
 
+  /// Popular communities the current user has not joined yet.
+  Future<List<Community>> fetchRecommendedCommunities({
+    Set<String> excludeIds = const <String>{},
+    int limit = 8,
+  }) async {
+    final snapshot = await _communities
+        .orderBy('memberCount', descending: true)
+        .limit(40)
+        .get();
+    return snapshot.docs
+        .map(Community.fromDoc)
+        .where((community) => !excludeIds.contains(community.id))
+        .take(limit)
+        .toList();
+  }
+
   Future<MembershipStatus> fetchMembershipStatus(String communityId) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return MembershipStatus.none;
