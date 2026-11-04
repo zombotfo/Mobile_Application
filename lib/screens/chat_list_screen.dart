@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/chat_model.dart';
-import '../services/block_service.dart';
 import '../services/chat_service.dart';
 import '../utils/time_ago.dart';
 import 'chat_detail_screen.dart';
@@ -22,12 +21,9 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _chatService = ChatService();
-  final _blockService = BlockService();
   StreamSubscription<List<ChatSummary>>? _chatsSubscription;
-  StreamSubscription<Set<String>>? _blocksSubscription;
   Timer? _initialLoadTimer;
   List<ChatSummary>? _chats;
-  Set<String> _blockedIds = <String>{};
   Set<String>? _matchingChatIds;
   bool _loading = true;
   bool _searchFiltering = false;
@@ -36,14 +32,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void initState() {
     super.initState();
-    _blocksSubscription = _blockService.blockedUserIdsStream().listen((ids) {
-      if (!mounted) return;
-      setState(() => _blockedIds = ids);
-      _filterChats();
-    }, onError: (Object error) {
-      // Keep the chat list usable if block lookup is unavailable.
-      debugPrint('ChatListScreen: block stream failed: $error');
-    });
     _listenToChats();
   }
 
@@ -52,7 +40,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _searchRequest++;
     _initialLoadTimer?.cancel();
     _chatsSubscription?.cancel();
-    _blocksSubscription?.cancel();
     super.dispose();
   }
 
@@ -116,7 +103,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     final matchingIds = <String>{};
     await Future.wait(chats.map((chat) async {
-      if (_blockedIds.contains(chat.otherUserId)) return;
       Map<String, dynamic>? profile;
       try {
         profile = await _chatService
@@ -220,7 +206,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   List<ChatSummary> get _visibleChats => (_chats ?? const <ChatSummary>[])
-      .where((chat) => !_blockedIds.contains(chat.otherUserId))
       .where((chat) =>
           _matchingChatIds == null || _matchingChatIds!.contains(chat.id))
       .toList();

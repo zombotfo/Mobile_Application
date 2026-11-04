@@ -1,4 +1,3 @@
-/// แสดงโปรไฟล์ สถิติ และโพสต์ของผู้ใช้ที่เลือก
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../models/friendship_model.dart';
 import '../models/post_model.dart';
 import '../services/chat_service.dart';
-import '../services/block_service.dart';
 import '../services/community_service.dart';
 import '../services/firestore_service.dart';
 import '../services/follow_service.dart';
@@ -32,14 +30,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _followService = FollowService();
   final _friendService = FriendService();
   final _chatService = ChatService();
-  final _blockService = BlockService();
 
   bool get _isMe => widget.uid == FirebaseAuth.instance.currentUser?.uid;
 
   // เห็นเนื้อหา (โพสต์/สถิติ) ได้เมื่อ: เป็นโปรไฟล์ตัวเอง, หรือบัญชีนั้น
   // ไม่ได้ตั้งเป็นส่วนตัว, หรือเราเป็นเพื่อนกับเจ้าของบัญชีแล้ว
-  bool get _canViewContent =>
-      _isMe || (!_isBlocked && (!_isPrivate || _isFriend));
+  bool get _canViewContent => _isMe || !_isPrivate || _isFriend;
 
   bool _loading = true;
   bool _hasError = false;
@@ -47,8 +43,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _photoBase64;
   bool _isPrivate = false;
   bool _isFriend = false;
-  bool _isBlocked = false;
-  bool _blockedByMe = false;
   List<Post> _posts = [];
   int _postCount = 0;
   int _totalUpvotes = 0;
@@ -81,18 +75,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final followerCount = profileResults[1] as int;
       final friendshipStatus = profileResults[2] as FriendshipStatus;
 
-      final blockResults = _isMe
-          ? <bool>[false, false]
-          : await Future.wait([
-              _blockService.isBlockedEitherWay(widget.uid),
-              _blockService.hasBlocked(widget.uid),
-            ]);
-      final isBlocked = blockResults[0];
-      final blockedByMe = blockResults[1];
-
       final isPrivate = profile?['isPrivate'] as bool? ?? false;
       final isFriend = friendshipStatus == FriendshipStatus.friends;
-      final canView = _isMe || (!isBlocked && (!isPrivate || isFriend));
+      final canView = _isMe || !isPrivate || isFriend;
 
       // ไม่ดึงโพสต์เลยถ้าดูเนื้อหาไม่ได้ (บัญชี private ที่ไม่ใช่เพื่อน)
       // ลดการอ่านข้อมูลที่ใช้งานไม่ได้อยู่ดี
@@ -118,8 +103,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _photoBase64 = profile?['photoBase64'] as String?;
         _isPrivate = isPrivate;
         _isFriend = isFriend;
-        _isBlocked = isBlocked;
-        _blockedByMe = blockedByMe;
         _posts = posts;
         _postCount = postCount;
         _totalUpvotes = posts.fold<int>(0, (sum, p) => sum + p.upvoteCount);
@@ -173,46 +156,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _toggleBlock() async {
-    if (!_blockedByMe) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('บล็อกผู้ใช้'),
-          content: Text(
-            'บล็อก u/$_username? คุณและผู้ใช้นี้จะไม่เห็นโพสต์และแชตของกันและกัน',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('ยกเลิก'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('บล็อก', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-    }
-
-    try {
-      if (_blockedByMe) {
-        await _blockService.unblockUser(widget.uid);
-      } else {
-        await _blockService.blockUser(widget.uid);
-      }
-      await _load();
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เปลี่ยนสถานะบล็อกไม่สำเร็จ ลองใหม่อีกครั้ง')),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -256,12 +199,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       Icon(Icons.lock_outline, size: 40, color: Colors.black26),
                       SizedBox(height: 10),
                       Text(
-                        'ไม่สามารถดูเนื้อหาของบัญชีนี้ได้',
+                        'บัญชีนี้เป็นส่วนตัว',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'อาจเป็นบัญชีส่วนตัวหรือมีการบล็อกระหว่างกัน',
+                        'เป็นเพื่อนกันก่อนถึงจะเห็นโพสต์ของบัญชีนี้ได้',
                         style: TextStyle(color: Colors.black45, fontSize: 13),
                         textAlign: TextAlign.center,
                       ),
@@ -363,26 +306,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (!_isBlocked) ...[
-                  FriendActionButton(uid: widget.uid, username: _username),
-                  FollowActionButton(uid: widget.uid, username: _username),
-                ],
-                OutlinedButton.icon(
-                  onPressed: _toggleBlock,
-                  icon: Icon(
-                    _blockedByMe ? Icons.person_remove_outlined : Icons.block,
-                    size: 18,
-                  ),
-                  label: Text(_blockedByMe ? 'เลิกบล็อก' : 'บล็อก'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _blockedByMe
-                        ? colors.primary
-                        : Colors.red.shade700,
-                  ),
-                ),
+                FriendActionButton(uid: widget.uid, username: _username),
+                FollowActionButton(uid: widget.uid, username: _username),
                 // บัญชี private ที่ยังไม่ใช่เพื่อนกัน ซ่อนปุ่มแชทไปเลย
                 // (ยังกดส่งคำขอเป็นเพื่อนได้ตามปกติ แค่แชทไม่ได้จนกว่าจะรับคำขอ)
-                if (!_isBlocked && (!_isPrivate || _isFriend))
+                if (!_isPrivate || _isFriend)
                   OutlinedButton.icon(
                     onPressed: _openChat,
                     icon: const Icon(Icons.chat_bubble_outline, size: 18),

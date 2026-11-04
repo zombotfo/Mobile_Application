@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../models/post_model.dart';
 import '../services/community_service.dart';
-import '../services/block_service.dart';
 import '../services/firestore_service.dart';
 import '../widgets/post_card.dart';
 
@@ -27,15 +26,12 @@ class FeedScreen extends StatefulWidget {
 class FeedScreenState extends State<FeedScreen> {
   final _firestoreService = FirestoreService();
   final _communityService = CommunityService();
-  final _blockService = BlockService();
   StreamSubscription<List<Post>>? _postsSubscription;
-  StreamSubscription<Set<String>>? _blocksSubscription;
   Timer? _initialLoadTimer;
 
   List<Post>? _posts;
   List<Post> _allPosts = <Post>[];
   Set<String> _myCommunityIds = <String>{};
-  Set<String> _blockedUserIds = <String>{};
   bool _receivedPosts = false;
   bool _loading = true;
   bool _hasError = false;
@@ -43,20 +39,12 @@ class FeedScreenState extends State<FeedScreen> {
   @override
   void initState() {
     super.initState();
-    _blocksSubscription = _blockService.blockedUserIdsStream().listen((ids) {
-      final changed = !_sameIds(_blockedUserIds, ids);
-      _blockedUserIds = ids;
-      if (changed && _receivedPosts) _applyPosts();
-    }, onError: (Object error) {
-      debugPrint('FeedScreen: failed to watch block list: $error');
-    });
     _listenToPosts();
   }
 
   @override
   void dispose() {
     _postsSubscription?.cancel();
-    _blocksSubscription?.cancel();
     _initialLoadTimer?.cancel();
     super.dispose();
   }
@@ -103,9 +91,7 @@ class FeedScreenState extends State<FeedScreen> {
   }
 
   void _applyPosts() {
-    final posts = CommunityService.filterVisible(_allPosts, _myCommunityIds)
-        .where((post) => !_blockedUserIds.contains(post.authorId))
-        .toList();
+    final posts = CommunityService.filterVisible(_allPosts, _myCommunityIds);
     if (!mounted) return;
     _initialLoadTimer?.cancel();
     setState(() {
@@ -134,16 +120,13 @@ class FeedScreenState extends State<FeedScreen> {
         myCommunityIds = <String>{};
       }
       final posts = CommunityService.filterVisible(allPosts, myCommunityIds);
-      final visiblePosts = posts
-          .where((post) => !_blockedUserIds.contains(post.authorId))
-          .toList();
 
       if (!mounted) return;
       _allPosts = allPosts;
       _myCommunityIds = myCommunityIds;
       _receivedPosts = true;
       setState(() {
-        _posts = visiblePosts;
+        _posts = posts;
         _hasError = false;
         _loading = false;
       });
@@ -155,9 +138,6 @@ class FeedScreenState extends State<FeedScreen> {
       });
     }
   }
-
-  bool _sameIds(Set<String> a, Set<String> b) =>
-      a.length == b.length && a.containsAll(b);
 
   /// เรียกจากภายนอกผ่าน GlobalKey ได้ เช่นตอนสร้างโพสต์ใหม่สำเร็จ
   /// อยากเห็นผลทันทีโดยไม่ต้องรอครบ 1 นาที

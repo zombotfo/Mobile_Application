@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import '../models/community_model.dart';
 import '../models/post_model.dart';
-import '../services/block_service.dart';
 import '../services/community_service.dart';
 import '../widgets/community_avatar.dart';
 import '../widgets/notification_dot.dart';
@@ -24,7 +23,6 @@ class CommunityScreen extends StatefulWidget {
 
 class _CommunityScreenState extends State<CommunityScreen> {
   final _service = CommunityService();
-  final _blockService = BlockService();
   late final Stream<int> _pendingRequestCountStream =
       _service.pendingRequestsCountStream(widget.communityId);
 
@@ -64,15 +62,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
       final status = await _service.fetchMembershipStatus(widget.communityId);
       final canView =
           !community.requiresApproval || status == MembershipStatus.active;
-      var posts = canView
+      final posts = canView
           ? await _service.fetchCommunityPosts(widget.communityId)
           : <Post>[];
-      if (canView) {
-        final blockedIds = await _blockService.fetchBlockedUserIds();
-        posts = posts
-            .where((post) => !blockedIds.contains(post.authorId))
-            .toList();
-      }
 
       if (!mounted) return;
       setState(() {
